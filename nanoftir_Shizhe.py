@@ -3444,10 +3444,10 @@ def complex_hankel_transform(x, signal, L=1.0, k_array=None):
         
     return k_array, T_k
 
-def fit_cht_peaks(x, signal, L=1.0, k_fit_range=(0.5, 30), p0=None, bounds=None, k_plot_range=(0.1, 40)):
+def fit_cht_peaks(x, signal, L=1.0, k_fit_range=(0.5, 30), p0=None, bounds=None, k_plot_range=(0.1, 40), num_peaks=1, model_type='independent'):
     """
-    Fits the CHT peaks to extract q_p = Re q_p + i Im q_p
-    Computes over k_plot_range, but only fits within k_fit_range.
+    Fits the CHT peaks to extract q_p.
+    Supports model_type='independent' or 'linked_paper'.
     """
     import numpy as np
     from scipy.optimize import least_squares
@@ -3460,27 +3460,79 @@ def fit_cht_peaks(x, signal, L=1.0, k_fit_range=(0.5, 30), p0=None, bounds=None,
     k_array_fit = k_array_full[mask]
     T_data_fit = T_data_full[mask]
     
-    def model_signal(x_val, A, q_re, q_im, phase, B=0):
-        q_p = q_re + 1j * q_im
+    def model_signal(x_val, theta, B_offset=0):
+        sig = np.zeros_like(x_val, dtype=complex)
         x_shifted = np.maximum(x_val, 1e-5)
-        return B + A * np.exp(1j * phase) * sp.hankel1(0, 2 * q_p * x_shifted)
+        
+        if model_type == 'independent':
+            for i in range(num_peaks):
+                A = theta[4*i]
+                q_re = theta[4*i+1]
+                q_im = theta[4*i+2]
+                phase = theta[4*i+3]
+                q_p = q_re + 1j * q_im
+                sig += A * np.exp(1j * phase) * sp.hankel1(0, 2 * q_p * x_shifted)
+        elif model_type == 'linked_paper':
+            A = theta[0]
+            q_re = theta[1]
+            q_im = theta[2]
+            phase_A = theta[3]
+            B_amp = theta[4]
+            phase_B = theta[5]
+            q_p = q_re + 1j * q_im
+            
+            term1 = A * np.exp(1j * phase_A) * sp.hankel1(0, 2 * q_p * x_shifted)
+            term2 = B_amp * np.exp(1j * phase_B) * np.exp(1j * q_p * x_shifted) / np.sqrt(x_shifted)
+            sig += term1 + term2
+            
+        return B_offset + sig
 
     def resid(theta):
-        A, q_re, q_im, phase = theta
-        mod_sig = model_signal(x, A, q_re, q_im, phase)
+        mod_sig = model_signal(x, theta)
         _, T_mod_fit = complex_hankel_transform(x, mod_sig, L=L, k_array=k_array_fit)
         diff = np.sqrt(k_array_fit) * (T_data_fit - T_mod_fit)
         return np.concatenate([np.real(diff), np.imag(diff)])
         
     if p0 is None:
-        p0 = [np.nanmax(np.abs(signal)), 10.0, 0.5, 0.0]
+        if model_type == 'independent':
+            p0 = []
+            for i in range(num_peaks):
+                p0.extend([np.nanmax(np.abs(signal))/(i+1), 10.0 * (i+1), 0.5, 0.0])
+        elif model_type == 'linked_paper':
+            p0 = [np.nanmax(np.abs(signal))/2.0, 10.0, 0.5, 0.0, np.nanmax(np.abs(signal))/2.0, 0.0]
+            
     if bounds is None:
-        bounds = ([0, 0.1, 0.01, -np.pi], [np.inf, 50.0, 10.0, np.pi])
+        if model_type == 'independent':
+            lower = [0, 0.1, 0.01, -np.pi] * num_peaks
+            upper = [np.inf, 100.0, 10.0, np.pi] * num_peaks
+            bounds = (lower, upper)
+        elif model_type == 'linked_paper':
+            lower = [0, 0.1, 0.01, -np.pi, 0.0, -np.pi]
+            upper = [np.inf, 100.0, 10.0, np.pi, np.inf, np.pi]
+            bounds = (lower, upper)
         
     res = least_squares(resid, p0, bounds=bounds, loss='soft_l1')
-    A_fit, q_re_fit, q_im_fit, phase_fit = res.x
-    mod_sig_fit = model_signal(x, A_fit, q_re_fit, q_im_fit, phase_fit)
     
+    if model_type == 'independent':
+        fit_params = []
+        for i in range(num_peaks):
+            fit_params.append({
+                'A': res.x[4*i],
+                'q_re': res.x[4*i+1],
+                'q_im': res.x[4*i+2],
+                'phase': res.x[4*i+3]
+            })
+    elif model_type == 'linked_paper':
+        fit_params = [{
+            'A': res.x[0],
+            'q_re': res.x[1],
+            'q_im': res.x[2],
+            'phase_A': res.x[3],
+            'B_amp': res.x[4],
+            'phase_B': res.x[5]
+        }]
+        
+    mod_sig_fit = model_signal(x, res.x)
     _, T_mod_full = complex_hankel_transform(x, mod_sig_fit, L=L, k_array=k_array_full)
     
-    return [A_fit, q_re_fit, q_im_fit, phase_fit], k_array_full, T_data_full, T_mod_full, mod_sig_fit
+    return fit_params, k_array_full, T_data_full, T_mod_full, mod_sig_fit

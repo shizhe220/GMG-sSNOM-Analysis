@@ -48,3 +48,9 @@ plt.rcParams.update({
 *   **Legends**: `frameon=False`, `fontsize=12`.
 *   **Math**: Use LaTeX formatting in strings (e.g., `r'Frequency (cm$^{-1}$)'`).
 *   **Panel Labels**: Placed at top-left inside the panel `(a), (b), (c)` using `ax.text` with `fontweight='bold'`, `fontsize=14`.
+
+
+## 2026-06-17 CHT Enhancements
+- Added multi-peak support (num_peaks parameter) to the Complex Hankel Transform (CHT) fitting algorithm in nanoftir_Shizhe.py.
+- Updated CHT plots in fitting_pipeline.ipynb to use 10^5 cm^-1 for momentum k to match FFT and real-space fits.
+- Changed CHT plot annotations to output Peak 1, Peak 2, etc., instead of assuming Peak is approx 2q_p to avoid confusion.
