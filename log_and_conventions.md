@@ -54,3 +54,38 @@ plt.rcParams.update({
 - Added multi-peak support (num_peaks parameter) to the Complex Hankel Transform (CHT) fitting algorithm in nanoftir_Shizhe.py.
 - Updated CHT plots in fitting_pipeline.ipynb to use 10^5 cm^-1 for momentum k to match FFT and real-space fits.
 - Changed CHT plot annotations to output Peak 1, Peak 2, etc., instead of assuming Peak is approx 2q_p to avoid confusion.
+
+
+## 2026-06-18 Batch Processing
+- Automated insertion of CHT/Real-space/FFT template cells into fitting_pipeline.ipynb for all wavenumbers.
+- Batch-generated and categorized all figures for 15 wavenumbers into the figures/ directory.
+
+## 2026-06-23 Refactor + CHT k_fit_range diagnosis (Claude Code)
+- **Refactor (no logic change)**: extracted the CHT fit+plot code that used to be copy-pasted in every
+  one of the 15 per-wavenumber notebook cells into `fit_and_plot_cht()` in `nanoftir_Shizhe.py`, plus
+  `load_aligned_wn_signal()` for data load/align/background-subtraction and `run_wn_comparison()` to
+  orchestrate CHT + real-space (hankel/1-sqrtx) + FFT for one wavenumber, with an optional `save_dir` to
+  write all three figures. Each wavenumber keeps its own notebook cell/markdown header (same outline,
+  individually re-runnable); only the CHT cell shrank, from ~8000 chars to ~12 lines of parameters + one
+  function call. Verified by re-executing the full notebook headlessly: all 15 wn reproduced the exact
+  same lambda_p/damping/RMSE as before the refactor.
+- **Root cause found for the high-wn CHT fit quality issue**: the CHT `k_fit_range_cm` had been left at a
+  fixed (0.5, 6.0) for every wavenumber, but as `k_linked_guess_cm` grows with wn, the tip-launched (2*q_p)
+  peak moves past k=6 and falls outside the fit window -- worst at 980/991/1000cm-1, where 991cm-1's CHT
+  damping diverged to ~3641 (degenerate fit, no real signal in-window). Diagnostic |T(k)| plots saved to
+  `figures/cht_diagnostics/`.
+- User manually re-tuned `x_start_cht` / `k_fit_range_cm` / `k_linked_guess_cm` per wavenumber in the
+  notebook (now generally widening/shifting the upper k bound with the guess, and narrowing the lower
+  bound to dodge a spurious low-k peak). Deviation of CHT lambda_p vs the real-space Hankel benchmark
+  dropped substantially for the worst cases (960cm-1: 17.3%->3.6%, 970cm-1: 10.7%->0.8%, 980cm-1:
+  14.3%->4.6%); 991cm-1's damping is now a physical 5.2 instead of 3641. 1000cm-1, 890cm-1, 950cm-1 got
+  slightly worse and may need another look (see CSV below).
+- Re-ran `save_fit_results.py` with the user's tuned parameters to regenerate all 45 figures
+  (`figures/cht/`, `figures/realspace/`, `figures/fft/`) and saved per-wn lambda/momentum/damping for
+  CHT, Hankel, 1/sqrtx, and FFT (None where not applicable) to `data/fit_results.pkl`.
+- Exported `data/cht_vs_realspace_wavelength_comparison.csv`: per-wn lambda_p (CHT/Hankel/1-sqrtx),
+  the CHT k_fit_range_cm and x-distance fit range used, and CHT's % deviation from each real-space method.
+- Cleanup: deleted stale one-off scripts superseded by the above (`append_cells.py`, `batch_run.py`,
+  `dump_cells.txt`). `data/fitting_results_comparison.csv` (860cm-1-only, pre-refactor) and
+  `figures/fit_result_860_*.png` / `figures/waterfall_gmg3.png` (pre-15-wn-pipeline) are now superseded
+  by the files above but were left in place pending user confirmation before deleting tracked files.

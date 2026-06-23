@@ -1,6 +1,7 @@
 # A collection of functions used to process nano-FTIR data and fitting
 # Author: Yinming Shao (2026)
 
+import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -3534,5 +3535,252 @@ def fit_cht_peaks(x, signal, L=1.0, k_fit_range=(0.5, 30), p0=None, bounds=None,
         
     mod_sig_fit = model_signal(x, res.x)
     _, T_mod_full = complex_hankel_transform(x, mod_sig_fit, L=L, k_array=k_array_full)
-    
+
     return fit_params, k_array_full, T_data_full, T_mod_full, mod_sig_fit
+
+
+def load_aligned_wn_signal(wn, align_shift_nm, data_dir='data/graphene_3x1', L_cutoff_fit=1.5):
+    """
+    Load one wavenumber's averaged line-profile CSV, shift its edge to x=0 using
+    align_shift_nm, and background-subtract O3A with the same savgol window used
+    throughout fitting_pipeline.ipynb. Returns the raw aligned dataframe plus the
+    masked/background-subtracted (x_f, sig_f) used by the CHT and real-space fits.
+    """
+    import glob, re
+    file_paths = glob.glob(f'{data_dir}/*_{wn.replace("cm-1","")}*AVG_lp1.csv')
+    if not file_paths:
+        # fall back to scanning all files and matching the leading wavenumber
+        file_paths = [p for p in glob.glob(f'{data_dir}/*_AVG_lp1.csv')
+                      if re.search(rf'(?<!\d){re.escape(wn.replace("cm-1",""))}cm-1', p)]
+    if not file_paths:
+        raise FileNotFoundError(f"No data file found for {wn} in {data_dir}")
+
+    df_target = pd.read_csv(file_paths[0])
+    df_target['distance_um'] = (df_target['distance_nm'] - align_shift_nm) / 1000.0
+
+    x_mat = df_target['distance_um'].values
+    y_mat = df_target['O3A'].values
+    window_len = min(41, len(y_mat) if len(y_mat) % 2 != 0 else len(y_mat) - 1)
+    y_bg = savgol_filter(y_mat, window_length=window_len, polyorder=2)
+    y_osc = y_mat - y_bg
+
+    mask_fit = (x_mat >= 0) & (x_mat <= L_cutoff_fit)
+    x_f = x_mat[mask_fit]
+    sig_f = y_osc[mask_fit]
+
+    return dict(df_target=df_target, x_f=x_f, sig_f=sig_f)
+
+
+def fit_and_plot_cht(x_f, sig_f, wn, x_start_cht=0.22, L_cutoff_cht=1.2,
+                      k_fit_range_cm=(0.5, 6.0), k_linked_guess_cm=2.0,
+                      model_type='linked_paper', num_peaks=1, save_path=None):
+    """
+    Single-source-of-truth CHT fit + 3-panel plot, parametrized version of the
+    'Fit 1: Complex Hankel Transform' cell that used to be copy-pasted once per
+    wavenumber in fitting_pipeline.ipynb. Same math, same plot layout; only the
+    tunable parameters (k_fit_range_cm, k_linked_guess_cm, x_start_cht, ...) are
+    now arguments instead of being retyped in every cell.
+
+    Returns a dict with the fit results (lambda_p, damping, k-space relative RMSE)
+    and the matplotlib figure. If save_path is given, the figure is saved there.
+    """
+    k_fit_range = (k_fit_range_cm[0] * 10.0, k_fit_range_cm[1] * 10.0)
+
+    mask_cht = x_f >= x_start_cht
+    x_f_cht = x_f[mask_cht]
+    sig_f_cht = sig_f[mask_cht]
+
+    amp_max = np.nanmax(np.abs(sig_f_cht))
+    if model_type == 'linked_paper':
+        q_re_guess = k_linked_guess_cm * 10.0
+        p0_guess = [amp_max / 2.0, q_re_guess, 0.5, 0.0, amp_max / 2.0, 0.0]
+    else:
+        raise NotImplementedError("fit_and_plot_cht currently only wraps model_type='linked_paper'; "
+                                   "use fit_cht_peaks directly for 'independent'.")
+
+    fit_params_cht, k_arr, T_data, T_mod, mod_sig_cplx = fit_cht_peaks(
+        x_f_cht, sig_f_cht, L=L_cutoff_cht, k_fit_range=k_fit_range, p0=p0_guess,
+        k_plot_range=(0.1, 100), num_peaks=num_peaks, model_type=model_type
+    )
+
+    params = fit_params_cht[0]
+    q_re_fit, q_im_fit = params['q_re'], params['q_im']
+    q_p = q_re_fit + 1j * q_im_fit
+    lam_cht_nm = (2 * np.pi / q_re_fit) * 1000
+    damping_cht = q_re_fit / q_im_fit if q_im_fit > 1e-9 else np.inf
+
+    fit_mask = (k_arr >= k_fit_range[0]) & (k_arr <= k_fit_range[1])
+    rmse_k = np.sqrt(np.mean(np.abs(T_data[fit_mask] - T_mod[fit_mask]) ** 2))
+    rel_rmse_k = rmse_k / np.mean(np.abs(T_data[fit_mask]))
+
+    import scipy.special as sp
+    x_safe = np.maximum(x_f_cht, 1e-5)
+    env_tip = params['A'] * np.abs(sp.hankel1(0, 2 * q_p * x_safe))
+    env_edge = params['B_amp'] * np.abs(np.exp(1j * q_p * x_safe) / np.sqrt(x_safe))
+    envelope_list = [env_tip, env_edge]
+    envelope = envelope_list[0]
+    mod_sig_fit = np.real(mod_sig_cplx)
+
+    c_data, c_fit = '#555555', '#b2182b'
+    c_env_a, c_env_b_blue, c_env_b_red = '#fddbc7', '#92c5de', '#f4a582'
+    colors_peaks, colors_text = ['#d6604d', 'darkorange'], ['#b2182b', '#b05b00']
+    labels_linked = ['Tip-Launched (2q)', 'Edge-Launched (q)']
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), dpi=100)
+
+    ax = axes[0]
+    x_nm = x_f_cht * 1000
+    ax.fill_between(x_nm, envelope, -envelope, color=c_env_a, alpha=0.6)
+    for i, env_i in enumerate(envelope_list):
+        ax.plot(x_nm, env_i, color=colors_peaks[i], linestyle=':', lw=1.5, label=labels_linked[i])
+        ax.plot(x_nm, -env_i, color=colors_peaks[i], linestyle=':', lw=1.5)
+    ax.plot(x_f * 1000, sig_f, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None',
+            color='lightgray', label='Discarded Data')
+    ax.plot(x_nm, sig_f_cht, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None',
+            color=c_data, label='Fitted Data')
+    ax.plot(x_nm, mod_sig_fit, color=c_fit, lw=2, label='Total Fit')
+    ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
+    ax.set_ylabel(r'Re $\xi_{\mathbf{opt}}$ (a.u.)', fontweight='bold')
+    ax.set_xlim(-20, L_cutoff_cht * 1000 + 20)
+    ax.set_yticks([])
+    ax.text(0.95, 0.95, rf"Single Mode $\lambda_p = {lam_cht_nm:.1f}$ nm",
+            transform=ax.transAxes, fontsize=12, va='top', ha='right', color=colors_text[0])
+    ax.legend(loc='lower right', fontsize=8)
+
+    ax = axes[1]
+    sqrt_x = np.sqrt(x_safe)
+    q_im_ideal = q_re_fit / 70.0
+    q_p_ideal = q_re_fit + 1j * q_im_ideal
+    envelope_ideal = params['A'] * np.abs(sp.hankel1(0, 2 * q_p_ideal * x_safe))
+    envelope_sqrt_ideal = envelope_ideal * sqrt_x
+    ax.fill_between(x_nm, envelope_sqrt_ideal, -envelope_sqrt_ideal, color=c_env_b_blue, alpha=0.8)
+    ax.fill_between(x_nm, envelope * sqrt_x, -envelope * sqrt_x, color=c_env_b_red, alpha=0.8)
+    ax.plot(x_nm, envelope_sqrt_ideal, color='#053061', linestyle=':', lw=1.5)
+    ax.plot(x_nm, -envelope_sqrt_ideal, color='#053061', linestyle=':', lw=1.5)
+    for i, env_i in enumerate(envelope_list):
+        env_sqrt_i = env_i * sqrt_x
+        ax.plot(x_nm, env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
+        ax.plot(x_nm, -env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
+    ax.plot(x_nm, sig_f_cht * sqrt_x, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None', color=c_data)
+    ax.plot(x_nm, mod_sig_fit * sqrt_x, color=c_fit, lw=2)
+    ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
+    ax.set_ylabel(r'Re $\xi_{\mathbf{opt}} \times \sqrt{\mathbf{x}}$ (a.u.)', fontweight='bold')
+    ax.set_xlim(-20, L_cutoff_cht * 1000 + 20)
+    ax.set_yticks([])
+    for i, env_i in enumerate(envelope_list):
+        lbl = "Tip-launched" if i == 0 else "Edge-launched"
+        env_sqrt_i = env_i * sqrt_x
+        max_env = np.max(env_sqrt_i)
+        y_pos = env_sqrt_i[-1]
+        y_text_offset = max_env * (0.8 + 0.5 * i) if i % 2 == 0 else -max_env * (0.8 + 0.5 * i)
+        ax.annotate(rf"{lbl} $\gamma_p^{{-1}} = {damping_cht:.1f}$",
+                    xy=(x_nm[-1] * 0.7, y_pos), xytext=(x_nm[-1] * 0.15, y_pos + y_text_offset),
+                    color=colors_text[i], fontsize=12, fontweight='bold',
+                    arrowprops=dict(arrowstyle="->", color=colors_text[i], lw=1.5, linestyle='--'))
+    ax.annotate(r"Ideal $\gamma_p^{-1} = 70$",
+                xy=(x_nm[-1] * 0.7, -envelope_sqrt_ideal[-1]),
+                xytext=(x_nm[-1] * 0.15, -envelope_sqrt_ideal[-1] - 0.5 * np.max(envelope * sqrt_x)),
+                color='#053061', fontsize=12, fontweight='bold',
+                arrowprops=dict(arrowstyle="->", color='#053061', lw=1.5, linestyle=':'))
+
+    ax = axes[2]
+    k_arr_cm = k_arr / 10.0
+    ax.plot(k_arr_cm, np.abs(T_data), 'o', color=c_data, markersize=4, label='Data $|T(k)|$')
+    ax.plot(k_arr_cm, np.abs(T_mod), '-', color=c_fit, lw=2, label='Total Fit $|T(k)|$')
+    ax.axvspan(k_fit_range_cm[0], k_fit_range_cm[1], color='gray', alpha=0.2, label='Fit Range')
+    ax.axvline(q_re_fit / 10.0, color='purple', linestyle='--', lw=1, label='q (Edge-launched)')
+    ax.axvline(2 * q_re_fit / 10.0, color='blue', linestyle='--', lw=1, label='2q (Tip-launched)')
+    ax.text(0.95, 0.4, rf"Single $q_p = {q_re_fit/10.0:.2f} + i{q_im_fit/10.0:.2f}$",
+            transform=ax.transAxes, fontsize=11, va='center', ha='right', color='black')
+    ax.set_xlabel(r'Momentum $k$ ($10^5$ cm$^{-1}$)', fontweight='bold')
+    ax.set_ylabel(r'$|T(k)|$ (a.u.)', fontweight='bold')
+    ax.set_xlim(0, 10)
+    ax.legend(loc='upper right', fontsize=9)
+
+    fig.suptitle(f"CHT Fit for {wn}", fontsize=14, fontweight='bold')
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+
+    results = dict(
+        wn=wn, q_re=q_re_fit, q_im=q_im_fit, lambda_p_nm=lam_cht_nm,
+        damping=damping_cht, rel_rmse_k=rel_rmse_k,
+        k_fit_range_cm=k_fit_range_cm, k_linked_guess_cm=k_linked_guess_cm,
+    )
+    return results, fig
+
+
+def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
+                       k_fit_range_cm=(0.5, 6.0), x_start_cht=0.22, L_cutoff_cht=1.2,
+                       L_cutoff_fit=1.5, lam0_guess_um=None, xr_range_rs=(0.22, 1.2),
+                       fft_xr=None, fft_q_guess=None, data_dir='data/graphene_3x1',
+                       save_dir=None, show=True):
+    """
+    One-call replacement for the per-wavenumber block that used to be copy-pasted
+    15 times in fitting_pipeline.ipynb (data load+align -> CHT fit -> real-space
+    hankel/1-sqrtx fit -> FFT comparison). Each wavenumber keeps its own cell in
+    the notebook; only the per-wn tunable parameters (k_fit_range_cm,
+    k_linked_guess_cm, lam0_guess_um, fft_q_guess, ...) need to be passed in.
+
+    If save_dir is given, saves the three figures to
+    {save_dir}/cht/{wn}_cht.png, {save_dir}/realspace/{wn}_realspace.png,
+    {save_dir}/fft/{wn}_fft.png (directories created as needed). Set show=False
+    to close figures immediately (e.g. for headless batch runs).
+
+    Returns a dict with the CHT results plus the real-space hankel/1-sqrtx
+    lambda_p/RMSE/AIC, suitable for assembling a comparison table across wn.
+    """
+    loaded = load_aligned_wn_signal(wn, align_shift_nm, data_dir=data_dir, L_cutoff_fit=L_cutoff_fit)
+    df_target, x_f, sig_f = loaded['df_target'], loaded['x_f'], loaded['sig_f']
+
+    if lam0_guess_um is None:
+        lam0_guess_um = (2 * np.pi) / (k_linked_guess_cm * 10.0)
+    if fft_q_guess is None:
+        fft_q_guess = [2 * k_linked_guess_cm]
+    if fft_xr is None:
+        fft_xr = xr_range_rs
+
+    cht_path = f'{save_dir}/cht/{wn}_cht.png' if save_dir else None
+    if save_dir:
+        os.makedirs(f'{save_dir}/cht', exist_ok=True)
+        os.makedirs(f'{save_dir}/realspace', exist_ok=True)
+        os.makedirs(f'{save_dir}/fft', exist_ok=True)
+
+    cht_results, fig_cht = fit_and_plot_cht(
+        x_f, sig_f, wn, x_start_cht=x_start_cht, L_cutoff_cht=L_cutoff_cht,
+        k_fit_range_cm=k_fit_range_cm, k_linked_guess_cm=k_linked_guess_cm,
+        save_path=cht_path)
+
+    amplp = pd.DataFrame({'distance_um': x_f, f'{wn}_O3A': sig_f})
+    outs, fig_rs, _ = compare_cavity_models(
+        amplp, f'{wn}_O3A', xr=xr_range_rs, yc_um=1.9, fit_yc=False, edges='single',
+        prefactors=('hankel', '1/sqrtx'), win=3, prom=0.01, lam0_guess=lam0_guess_um,
+        ylim=(sig_f.min() * 2, sig_f.max() * 1.5), xlim=(x_f.min(), x_f.max()), figsize=(8, 6))
+    if save_dir:
+        fig_rs.savefig(f'{save_dir}/realspace/{wn}_realspace.png', dpi=200, bbox_inches='tight')
+
+    fig_fft = plt.figure(figsize=(12, 4))
+    amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
+    window_len = min(41, len(amp_raw) if len(amp_raw) % 2 != 0 else len(amp_raw) - 1)
+    amp_osc = amp_raw - savgol_filter(amp_raw, window_length=window_len, polyorder=2)
+    plot_channel_fft(df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn,
+                      xr=fft_xr, q_range=(0, 10), window='hann', pad_factor=3.0,
+                      q_guess=fft_q_guess)
+    if save_dir:
+        fig_fft.savefig(f'{save_dir}/fft/{wn}_fft.png', dpi=200, bbox_inches='tight')
+
+    if not show:
+        plt.close(fig_cht); plt.close(fig_rs); plt.close(fig_fft)
+
+    results = dict(wn=wn, **{k: v for k, v in cht_results.items() if k != 'wn'})
+    for pf in ('hankel', '1/sqrtx'):
+        p, d, met = outs[pf]['params'], outs[pf]['derived'], outs[pf]['metrics']
+        damp_key = 'q_imag_um^-1' if pf == 'hankel' else 'alpha_env_um^-1'
+        results[f'{pf}_lambda_p_nm'] = p['lambda_p_um'] * 1000
+        results[f'{pf}_q_p_1e5cm-1'] = d['q_cm^-1'] / 1e5
+        results[f'{pf}_damping'] = d['q_rad_per_um'] / p[damp_key] if p[damp_key] > 1e-9 else np.inf
+        results[f'{pf}_rmse'] = met['rmse']
+        results[f'{pf}_aic'] = met['aic']
+
+    return results, (fig_cht, fig_rs, fig_fft)
