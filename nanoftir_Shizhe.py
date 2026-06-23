@@ -3760,13 +3760,15 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
     if save_dir:
         fig_rs.savefig(f'{save_dir}/realspace/{wn}_realspace.png', dpi=200, bbox_inches='tight')
 
-    fig_fft = plt.figure(figsize=(12, 4))
     amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
     window_len = min(41, len(amp_raw) if len(amp_raw) % 2 != 0 else len(amp_raw) - 1)
     amp_osc = amp_raw - savgol_filter(amp_raw, window_length=window_len, polyorder=2)
     plot_channel_fft(df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn,
                       xr=fft_xr, q_range=(0, 10), window='hann', pad_factor=3.0,
                       q_guess=fft_q_guess)
+    # plot_channel_fft creates its own figure internally (via plt.subplots) rather
+    # than drawing onto a pre-made one, so grab whatever it just made as "current".
+    fig_fft = plt.gcf()
     if save_dir:
         fig_fft.savefig(f'{save_dir}/fft/{wn}_fft.png', dpi=200, bbox_inches='tight')
 
