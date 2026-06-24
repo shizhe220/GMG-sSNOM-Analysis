@@ -746,10 +746,48 @@ def fit_cavity_prefactor_compare(y_um, s, xr=(0.1, 3.7), yc_um=1.9,
         params['alpha_env_um^-1'] = alpha_env_um
         derived['alpha_env_cm^-1'] = alpha_env_um * 1e4
 
+    # Dense grid purely for a smooth plotted curve -- the fit itself (RMSE/AIC/params
+    # above) is unchanged, still computed on the actual data grid `y`. Real nano-FTIR
+    # line profiles are often sparse enough relative to a short lambda_p that connecting
+    # only the data points with straight segments makes the curve look polygonal/jagged.
+    x_dense = np.linspace(xr[0], xr[1], 600)
+    xL_d = np.clip(x_dense - xr[0], eps, None)
+    xR_d = np.clip(xr[1] - x_dense, eps, None)
+
+    if prefactor == 'hankel':
+        q_p_d = (2*np.pi/lam_um) + 1j*alpha_or_qimag
+        field_d = hankel1(0, 2*q_p_d*xL_d)
+        if edges == 'double':
+            field_d = field_d + hankel1(0, 2*q_p_d*xR_d)
+        h_d = np.real(np.exp(1j*phi) * field_d)
+        h_d = h_d / max(np.nanmax(np.abs(h_d)), 1e-12)
+        y_dense = B + A * h_d
+    else:
+        alpha_env = alpha_or_qimag
+        q_d = 2*np.pi / lam_um
+        Fint_d = np.cosh(alpha_env * (x_dense - yc_fit))
+        Fint_d = Fint_d / max(np.nanmax(Fint_d), 1e-12)
+
+        if prefactor == 'none':
+            g_d = np.ones_like(x_dense)
+        elif prefactor == '1/sqrtx':
+            g_d = 1/np.sqrt(xL_d + R_um)
+            if edges == 'double': g_d = g_d + 1/np.sqrt(xR_d + R_um)
+        elif prefactor == '1/x':
+            g_d = 1/(xL_d + R_um)
+            if edges == 'double': g_d = g_d + 1/(xR_d + R_um)
+        else:  # 'powerlaw'
+            g_d = 1/(xL_d**a_fit + R_um**a_fit)
+            if edges == 'double': g_d = g_d + 1/(xR_d**a_fit + R_um**a_fit)
+        g_d = g_d / max(np.nanmax(np.abs(g_d)), 1e-12)
+        y_dense = B + A * np.sin(2*q_d*(x_dense - yc_fit) + phi) * Fint_d * g_d
+
     return {
         'mask': m,
         'x_fit_um': y,
         'y_fit': fit,
+        'x_dense_um': x_dense,
+        'y_dense': y_dense,
         'params': params,
         'derived': derived,
         'metrics': {'rss': rss, 'rmse': rmse, 'aic': aic},
@@ -763,7 +801,7 @@ def compare_cavity_models(amplp, col,
                           R_nm=25.0, a0=1.0,
                           win=7, prom=0.02,
                           prefactors=('none', '1/sqrtx', '1/x', 'powerlaw', 'hankel'),
-                          ylim=(0.5, 0.9), xlim=(0.1, 3.7),
+                          ylim=(0.5, 0.9), xlim=None,
                           figsize=(6.2, 5.2), show_text=True, lam0_guess=None, edges='double'):
     """
     Fit and compare multiple cavity models for one line-profile column.
@@ -777,6 +815,12 @@ def compare_cavity_models(amplp, col,
     """
     x = amplp['distance_um'].values
     y = amplp[col].values
+
+    # Default the displayed x-range to the fit window itself, rather than the full
+    # data range -- otherwise the oscillation the fit actually targets gets squeezed
+    # into a sliver of the plot and is hard to see.
+    if xlim is None:
+        xlim = xr
 
     # fit all requested models
     outs = {}
@@ -813,11 +857,10 @@ def compare_cavity_models(amplp, col,
 
     for pf in order:
         out = outs[pf]
-        xf = out['x_fit_um']
-        yf = out['y_fit']
-        m = out['mask']
+        xf, yf, m = out['x_fit_um'], out['y_fit'], out['mask']
 
-        line, = ax.plot(xf, yf, lw=1.2, label=pf)
+        # Smooth dense curve for display; residuals below still use the real data grid.
+        line, = ax.plot(out['x_dense_um'], out['y_dense'], lw=1.6, label=pf)
         axr.plot(xf, y[m] - yf, lw=1.2, color=line.get_color())
 
     ax.set(
@@ -825,7 +868,9 @@ def compare_cavity_models(amplp, col,
         ylabel='Amplitude (a.u.)',
         ylim=ylim
     )
-    ax.legend(fontsize=8, ncol=2)
+    ax.set_ylabel('Amplitude (a.u.)', fontweight='bold')
+    ax.legend(fontsize=12, ncol=2, frameon=False)
+    ax.tick_params(direction='in', top=True, right=True)
 
     axr.axhline(0, color='gray', ls='--', lw=1)
     axr.set(
@@ -833,6 +878,8 @@ def compare_cavity_models(amplp, col,
         xlabel=r'Distance ($\mu$m)',
         ylabel='resid.'
     )
+    axr.set_xlabel(r'Distance ($\mu$m)', fontweight='bold')
+    axr.tick_params(direction='in', top=True, right=True)
 
     if show_text:
         lines = []
@@ -2899,14 +2946,14 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
             ax1.plot(x_full, amp_full, 'k-o', ms=3, lw=1.5, label=f'Amp{lbl_suffix}', zorder=3)
             ax1_twin.plot(x_full, phase_full, 'r-o', ms=3, lw=1.5, alpha=0.5, label=f'Phase', zorder=2)
             if window and window != 'boxcar':
-                ax1.plot(x_c, amp_win + np.mean(amp_c), color='#1f77b4', linestyle='-', lw=2.5, alpha=0.9, label=f'Windowed', zorder=4)
+                ax1.plot(x_c, amp_win + np.mean(amp_c), color='#1f77b4', linestyle='-', lw=2.5, alpha=0.9, label=f'Windowed Amp', zorder=4)
         else:
             # Folded mode: just plot the final folded sequence, NO original sequence.
             # Note: amp_c already contains the physical spatial mean!
             ax1.plot(x_c, amp_c, 'k-^', ms=4, lw=1.5, label=f'Folded Amp{lbl_suffix}', zorder=3)
             ax1_twin.plot(x_c, phase_c, 'r-^', ms=4, lw=1.5, alpha=0.5, label=f'Folded Phase', zorder=2)
             if window and window != 'boxcar':
-                ax1.plot(x_c, amp_win + np.mean(amp_c), color='#1f77b4', linestyle='-', lw=2.5, alpha=0.9, label=f'Folded Windowed', zorder=4)
+                ax1.plot(x_c, amp_win + np.mean(amp_c), color='#1f77b4', linestyle='-', lw=2.5, alpha=0.9, label=f'Folded Windowed Amp', zorder=4)
                 
         x_min, x_max = (np.nanmin(x_c), np.nanmax(x_c)) if is_folded else (np.nanmin(x_full), np.nanmax(x_full))
         
@@ -2936,16 +2983,16 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
             if valid_x_min > x_min: ax1.axvspan(x_min, valid_x_min, color='gray', alpha=0.3, zorder=0)
             if valid_x_max < x_max: ax1.axvspan(valid_x_max, x_max, color='gray', alpha=0.3, zorder=0)
 
-        ax1.set_xlabel(r'Distance ($\mu$m)')
-        ax1.set_ylabel('Amplitude (a.u.)', color='k')
+        ax1.set_xlabel(r'Distance ($\mu$m)', fontweight='bold')
+        ax1.set_ylabel('Amplitude (a.u.)', color='k', fontweight='bold')
         ax1.tick_params(axis='y', labelcolor='k')
-        ax1_twin.set_ylabel('Phase (a.u.)', color='r')
+        ax1_twin.set_ylabel('Phase (a.u.)', color='r', fontweight='bold')
         ax1_twin.tick_params(axis='y', labelcolor='r')
-        
+
         axs[0].set_title(f'Spatial Data ({label})  xr={xr}')
         lines_1, labels_1 = ax1.get_legend_handles_labels()
         lines_2, labels_2 = ax1_twin.get_legend_handles_labels()
-        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower right', framealpha=0.6, fontsize=8)
+        ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='lower right', fontsize=9, frameon=False)
 
         # ── convert q to 10⁵ cm⁻¹ for display (internal q is in µm⁻¹; 1 µm⁻¹ = 10⁴ cm⁻¹ = 0.1×10⁵ cm⁻¹)
         q_amp_plt     = q_amp     / 10.0
@@ -2955,6 +3002,7 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
         # [图2: Amp FFT]
         axs[1].plot(q_amp_plt, spec_amp, 'bo-', lw=1.5, ms=4)
         axs[1].set(xlabel=xlabel_q, ylabel='Norm. FFT Amp', title=f'Amp FFT ({label})\n{pad_str}')
+        axs[1].set_xlabel(xlabel_q, fontweight='bold'); axs[1].set_ylabel('Norm. FFT Amp', fontweight='bold')
         axs[1].set_xlim(q_range)
         if comp_amp is not None:
             axs[1].plot(comp_amp['q_fit']/10, comp_amp['sum'], 'k--', lw=1.5, alpha=0.8, zorder=5)
@@ -2972,6 +3020,7 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
         # [图3: Phase FFT]
         axs[2].plot(q_amp_plt, spec_phase, 'm^-', lw=1.5, ms=4)
         axs[2].set(xlabel=xlabel_q, ylabel='Norm. FFT Amp', title=f'Phase FFT ({label})\n{pad_str}')
+        axs[2].set_xlabel(xlabel_q, fontweight='bold'); axs[2].set_ylabel('Norm. FFT Amp', fontweight='bold')
         axs[2].set_xlim(q_range)
         if comp_phase is not None:
             axs[2].plot(comp_phase['q_fit']/10, comp_phase['sum'], 'k--', lw=1.5, alpha=0.8, zorder=5)
@@ -2989,6 +3038,7 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
         # [图4: Complex FFT]
         axs[3].plot(q_complex_plt, spec_complex, 'go-', lw=1.5, ms=4)
         axs[3].set(xlabel=xlabel_q, ylabel='Norm. FFT Amp', title=f'Complex FFT ({label})\n{pad_str}')
+        axs[3].set_xlabel(xlabel_q, fontweight='bold'); axs[3].set_ylabel('Norm. FFT Amp', fontweight='bold')
         axs[3].set_xlim(q_range)
         if comp_complex is not None:
             axs[3].plot(comp_complex['q_fit']/10, comp_complex['sum'], 'k--', lw=1.5, alpha=0.8, zorder=5)
@@ -3004,7 +3054,7 @@ def plot_channel_fft(x, amp, phase, label, wn=None,
             axs[3].text(0.95, 0.95 - i*0.13, f'q={q_max/10:.2f}{fwhm_str}', color=c, fontsize=10, fontweight='bold', transform=axs[3].transAxes, ha='right', va='top', bbox=bbox_props)
 
         for ax_i in [ax1, ax1_twin, axs[1], axs[2], axs[3]]:
-            ax_i.tick_params(direction=tick_dir, which='both')
+            ax_i.tick_params(direction=tick_dir, which='both', top=True, right=True)
             ax_i.yaxis.set_major_locator(MaxNLocator(nbins=y_bins))
 
         plt.tight_layout()
@@ -3621,6 +3671,21 @@ def fit_and_plot_cht(x_f, sig_f, wn, x_start_cht=0.22, L_cutoff_cht=1.2,
     envelope = envelope_list[0]
     mod_sig_fit = np.real(mod_sig_cplx)
 
+    # Dense grid purely for smooth plotted curves (envelopes + total fit). The
+    # actual fit/RMSE above is unchanged, still evaluated on the real data grid.
+    x_dense = np.linspace(x_start_cht, L_cutoff_cht, 600)
+    x_dense_safe = np.maximum(x_dense, 1e-5)
+    x_nm_dense = x_dense * 1000
+    phase_A = params.get('phase_A', params.get('phase', 0.0))
+    mod_sig_dense = np.real(
+        params['A'] * np.exp(1j * phase_A) * sp.hankel1(0, 2 * q_p * x_dense_safe)
+        + params['B_amp'] * np.exp(1j * params['phase_B']) * np.exp(1j * q_p * x_dense_safe) / np.sqrt(x_dense_safe)
+    )
+    env_tip_dense = params['A'] * np.abs(sp.hankel1(0, 2 * q_p * x_dense_safe))
+    env_edge_dense = params['B_amp'] * np.abs(np.exp(1j * q_p * x_dense_safe) / np.sqrt(x_dense_safe))
+    envelope_list_dense = [env_tip_dense, env_edge_dense]
+    envelope_dense = envelope_list_dense[0]
+
     c_data, c_fit = '#555555', '#b2182b'
     c_env_a, c_env_b_blue, c_env_b_red = '#fddbc7', '#92c5de', '#f4a582'
     colors_peaks, colors_text = ['#d6604d', 'darkorange'], ['#b2182b', '#b05b00']
@@ -3630,58 +3695,61 @@ def fit_and_plot_cht(x_f, sig_f, wn, x_start_cht=0.22, L_cutoff_cht=1.2,
 
     ax = axes[0]
     x_nm = x_f_cht * 1000
-    ax.fill_between(x_nm, envelope, -envelope, color=c_env_a, alpha=0.6)
-    for i, env_i in enumerate(envelope_list):
-        ax.plot(x_nm, env_i, color=colors_peaks[i], linestyle=':', lw=1.5, label=labels_linked[i])
-        ax.plot(x_nm, -env_i, color=colors_peaks[i], linestyle=':', lw=1.5)
+    ax.fill_between(x_nm_dense, envelope_dense, -envelope_dense, color=c_env_a, alpha=0.6)
+    for i, env_i in enumerate(envelope_list_dense):
+        ax.plot(x_nm_dense, env_i, color=colors_peaks[i], linestyle=':', lw=1.5, label=labels_linked[i])
+        ax.plot(x_nm_dense, -env_i, color=colors_peaks[i], linestyle=':', lw=1.5)
     ax.plot(x_f * 1000, sig_f, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None',
             color='lightgray', label='Discarded Data')
     ax.plot(x_nm, sig_f_cht, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None',
             color=c_data, label='Fitted Data')
-    ax.plot(x_nm, mod_sig_fit, color=c_fit, lw=2, label='Total Fit')
+    ax.plot(x_nm_dense, mod_sig_dense, color=c_fit, lw=2, label='Total Fit')
     ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
     ax.set_ylabel(r'Re $\xi_{\mathbf{opt}}$ (a.u.)', fontweight='bold')
     ax.set_xlim(-20, L_cutoff_cht * 1000 + 20)
     ax.set_yticks([])
     ax.text(0.95, 0.95, rf"Single Mode $\lambda_p = {lam_cht_nm:.1f}$ nm",
             transform=ax.transAxes, fontsize=12, va='top', ha='right', color=colors_text[0])
-    ax.legend(loc='lower right', fontsize=8)
+    ax.legend(loc='lower right', fontsize=11, frameon=False)
+    ax.tick_params(direction='in', top=True, right=True)
 
     ax = axes[1]
     sqrt_x = np.sqrt(x_safe)
+    sqrt_x_dense = np.sqrt(x_dense_safe)
     q_im_ideal = q_re_fit / 70.0
     q_p_ideal = q_re_fit + 1j * q_im_ideal
-    envelope_ideal = params['A'] * np.abs(sp.hankel1(0, 2 * q_p_ideal * x_safe))
-    envelope_sqrt_ideal = envelope_ideal * sqrt_x
-    ax.fill_between(x_nm, envelope_sqrt_ideal, -envelope_sqrt_ideal, color=c_env_b_blue, alpha=0.8)
-    ax.fill_between(x_nm, envelope * sqrt_x, -envelope * sqrt_x, color=c_env_b_red, alpha=0.8)
-    ax.plot(x_nm, envelope_sqrt_ideal, color='#053061', linestyle=':', lw=1.5)
-    ax.plot(x_nm, -envelope_sqrt_ideal, color='#053061', linestyle=':', lw=1.5)
-    for i, env_i in enumerate(envelope_list):
-        env_sqrt_i = env_i * sqrt_x
-        ax.plot(x_nm, env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
-        ax.plot(x_nm, -env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
+    envelope_ideal_dense = params['A'] * np.abs(sp.hankel1(0, 2 * q_p_ideal * x_dense_safe))
+    envelope_sqrt_ideal_dense = envelope_ideal_dense * sqrt_x_dense
+    ax.fill_between(x_nm_dense, envelope_sqrt_ideal_dense, -envelope_sqrt_ideal_dense, color=c_env_b_blue, alpha=0.8)
+    ax.fill_between(x_nm_dense, envelope_dense * sqrt_x_dense, -envelope_dense * sqrt_x_dense, color=c_env_b_red, alpha=0.8)
+    ax.plot(x_nm_dense, envelope_sqrt_ideal_dense, color='#053061', linestyle=':', lw=1.5)
+    ax.plot(x_nm_dense, -envelope_sqrt_ideal_dense, color='#053061', linestyle=':', lw=1.5)
+    for i, env_i in enumerate(envelope_list_dense):
+        env_sqrt_i = env_i * sqrt_x_dense
+        ax.plot(x_nm_dense, env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
+        ax.plot(x_nm_dense, -env_sqrt_i, color=colors_peaks[i], linestyle='--', lw=1.5)
     ax.plot(x_nm, sig_f_cht * sqrt_x, marker='x', markersize=7, markeredgewidth=1.5, linestyle='None', color=c_data)
-    ax.plot(x_nm, mod_sig_fit * sqrt_x, color=c_fit, lw=2)
+    ax.plot(x_nm_dense, mod_sig_dense * sqrt_x_dense, color=c_fit, lw=2)
     ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
     ax.set_ylabel(r'Re $\xi_{\mathbf{opt}} \times \sqrt{\mathbf{x}}$ (a.u.)', fontweight='bold')
     ax.set_xlim(-20, L_cutoff_cht * 1000 + 20)
     ax.set_yticks([])
-    for i, env_i in enumerate(envelope_list):
+    for i, env_i in enumerate(envelope_list_dense):
         lbl = "Tip-launched" if i == 0 else "Edge-launched"
-        env_sqrt_i = env_i * sqrt_x
+        env_sqrt_i = env_i * sqrt_x_dense
         max_env = np.max(env_sqrt_i)
         y_pos = env_sqrt_i[-1]
         y_text_offset = max_env * (0.8 + 0.5 * i) if i % 2 == 0 else -max_env * (0.8 + 0.5 * i)
         ax.annotate(rf"{lbl} $\gamma_p^{{-1}} = {damping_cht:.1f}$",
-                    xy=(x_nm[-1] * 0.7, y_pos), xytext=(x_nm[-1] * 0.15, y_pos + y_text_offset),
+                    xy=(x_nm_dense[-1] * 0.7, y_pos), xytext=(x_nm_dense[-1] * 0.15, y_pos + y_text_offset),
                     color=colors_text[i], fontsize=12, fontweight='bold',
                     arrowprops=dict(arrowstyle="->", color=colors_text[i], lw=1.5, linestyle='--'))
     ax.annotate(r"Ideal $\gamma_p^{-1} = 70$",
-                xy=(x_nm[-1] * 0.7, -envelope_sqrt_ideal[-1]),
-                xytext=(x_nm[-1] * 0.15, -envelope_sqrt_ideal[-1] - 0.5 * np.max(envelope * sqrt_x)),
+                xy=(x_nm_dense[-1] * 0.7, -envelope_sqrt_ideal_dense[-1]),
+                xytext=(x_nm_dense[-1] * 0.15, -envelope_sqrt_ideal_dense[-1] - 0.5 * np.max(envelope_dense * sqrt_x_dense)),
                 color='#053061', fontsize=12, fontweight='bold',
                 arrowprops=dict(arrowstyle="->", color='#053061', lw=1.5, linestyle=':'))
+    ax.tick_params(direction='in', top=True, right=True)
 
     ax = axes[2]
     k_arr_cm = k_arr / 10.0
@@ -3695,7 +3763,8 @@ def fit_and_plot_cht(x_f, sig_f, wn, x_start_cht=0.22, L_cutoff_cht=1.2,
     ax.set_xlabel(r'Momentum $k$ ($10^5$ cm$^{-1}$)', fontweight='bold')
     ax.set_ylabel(r'$|T(k)|$ (a.u.)', fontweight='bold')
     ax.set_xlim(0, 10)
-    ax.legend(loc='upper right', fontsize=9)
+    ax.legend(loc='upper right', fontsize=10, frameon=False)
+    ax.tick_params(direction='in', top=True, right=True)
 
     fig.suptitle(f"CHT Fit for {wn}", fontsize=14, fontweight='bold')
     fig.tight_layout()
@@ -3756,16 +3825,16 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
     outs, fig_rs, _ = compare_cavity_models(
         amplp, f'{wn}_O3A', xr=xr_range_rs, yc_um=1.9, fit_yc=False, edges='single',
         prefactors=('hankel', '1/sqrtx'), win=3, prom=0.01, lam0_guess=lam0_guess_um,
-        ylim=(sig_f.min() * 2, sig_f.max() * 1.5), xlim=(x_f.min(), x_f.max()), figsize=(8, 6))
+        ylim=(sig_f.min() * 2, sig_f.max() * 1.5), figsize=(8, 6))
     if save_dir:
         fig_rs.savefig(f'{save_dir}/realspace/{wn}_realspace.png', dpi=200, bbox_inches='tight')
 
     amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
     window_len = min(41, len(amp_raw) if len(amp_raw) % 2 != 0 else len(amp_raw) - 1)
     amp_osc = amp_raw - savgol_filter(amp_raw, window_length=window_len, polyorder=2)
-    plot_channel_fft(df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn,
-                      xr=fft_xr, q_range=(0, 10), window='hann', pad_factor=3.0,
-                      q_guess=fft_q_guess)
+    fft_out = plot_channel_fft(df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn,
+                                xr=fft_xr, q_range=(0, 10), window='hann', pad_factor=3.0,
+                                q_guess=fft_q_guess)
     # plot_channel_fft creates its own figure internally (via plt.subplots) rather
     # than drawing onto a pre-made one, so grab whatever it just made as "current".
     fig_fft = plt.gcf()
@@ -3784,5 +3853,17 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
         results[f'{pf}_damping'] = d['q_rad_per_um'] / p[damp_key] if p[damp_key] > 1e-9 else np.inf
         results[f'{pf}_rmse'] = met['rmse']
         results[f'{pf}_aic'] = met['aic']
+
+    # FFT: take the dominant complex-FFT peak nearest the first q_guess as the q_p estimate
+    # (matches the "q, not 2q" convention used for fft_q_guess[0] / CHT's edge-launched q).
+    fft_peaks = [p for p in fft_out['peaks_complex']['peaks'] if p is not None]
+    if fft_peaks:
+        q_fft_1e5cm1 = fft_peaks[0] / 10.0
+        results['fft_q_p_1e5cm-1'] = q_fft_1e5cm1
+        results['fft_lambda_p_nm'] = (2 * np.pi / q_fft_1e5cm1) * 100
+    else:
+        results['fft_q_p_1e5cm-1'] = None
+        results['fft_lambda_p_nm'] = None
+    results['fft_damping'] = None  # not estimated from the FFT peak
 
     return results, (fig_cht, fig_rs, fig_fft)

@@ -127,9 +127,9 @@ for wn, p in wn_params.items():
             'damping': new_results['1/sqrtx_damping'],
         },
         'fft': {
-            'lambda_p_nm': None,
-            'q_p_1e5cm-1': None,
-            'damping': None,
+            'lambda_p_nm': new_results['fft_lambda_p_nm'],
+            'q_p_1e5cm-1': new_results['fft_q_p_1e5cm-1'],
+            'damping': new_results['fft_damping'],
         },
         'cht_old_window': {
             'lambda_p_nm': old_cht_results['lambda_p_nm'],
