@@ -855,12 +855,20 @@ def compare_cavity_models(amplp, col,
 
     ax.plot(x, y, 'k.', ms=4, alpha=0.7, label='data', zorder=5)
 
+    # Fixed color per prefactor (not per AIC rank) so e.g. 'hankel' is always the
+    # same color across every wavenumber's plot, regardless of which model wins AIC.
+    prefactor_colors = {
+        'hankel': '#1c7293', '1/sqrtx': '#e08214', 'none': '#7f7f7f',
+        '1/x': '#2ca02c', 'powerlaw': '#9467bd',
+    }
+
     for pf in order:
         out = outs[pf]
         xf, yf, m = out['x_fit_um'], out['y_fit'], out['mask']
 
         # Smooth dense curve for display; residuals below still use the real data grid.
-        line, = ax.plot(out['x_dense_um'], out['y_dense'], lw=1.6, label=pf)
+        color = prefactor_colors.get(pf)
+        line, = ax.plot(out['x_dense_um'], out['y_dense'], lw=1.6, color=color, label=pf)
         axr.plot(xf, y[m] - yf, lw=1.2, color=line.get_color())
 
     ax.set(
