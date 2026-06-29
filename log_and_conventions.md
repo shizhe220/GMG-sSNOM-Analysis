@@ -1,5 +1,57 @@
 # Log & Conventions
 
+## Folder Structure (as of 2026-06-29)
+
+```
+GMG/
+├── fitting_pipeline.ipynb        CHT/Hankel/1-sqrtx/FFT fitting, per wn (15 cells each)
+├── manual_linecut_pipeline.ipynb Manual per-wn linecut extraction from processed_3x1um/*.npz
+├── nanoftir_Shizhe.py             Core fitting module (CHT, real-space, FFT) -- imported by
+│                                  both notebooks + webtool/. Kept at root: moving it would
+│                                  require editing every notebook's import cell for no benefit.
+├── loadnpz.py                     Reader for the FwdBwd .npz summary format (2D channels +
+│                                  ROI/line-profile metadata). Also kept at root for the same reason.
+├── log_and_conventions.md         This file.
+│
+├── data/
+│   ├── processed_3x1um/           Raw .npz per wn (full 2D O2/O3/O4 amp+phase + Z maps)
+│   ├── graphene_3x1/               Old CSV-based line profiles (pre-npz pipeline)
+│   ├── graphene_3x1_manual/        CSV export from manual_linecut_pipeline.ipynb (same columns
+│   │                                as graphene_3x1/, drop-in replacement -- point fitting_pipeline's
+│   │                                data_dir here to fit the manually-extracted+aligned linecuts)
+│   ├── fit_results.pkl             Per-wn lambda/q/damping for CHT/Hankel/1-sqrtx/FFT
+│   └── cht_vs_realspace_wavelength_comparison.csv
+│
+├── figures/
+│   ├── cht/ realspace/ fft/        Per-wn fit figures (15 each)
+│   ├── cht_diagnostics/            |T(k)| peak-location diagnostics (960-1000cm-1 k_fit_range issue)
+│   ├── manual_linecut/             Z-plane-correction checks + waterfall from manual_linecut_pipeline
+│   ├── overview/                   Amp/Phase/Z overview + waterfall snapshots
+│   └── q_vs_wn_*.png               Combined + per-method momentum-vs-wavenumber summary plots
+│
+├── scripts/                        Standalone regeneration scripts (not imported by either notebook).
+│   │                                Each chdir's to the repo root on startup (computed from __file__),
+│   │                                so they can be run from anywhere, not just when cwd is the repo root.
+│   ├── save_fit_results.py         Re-parses fitting_pipeline.ipynb's current per-wn CHT/RS/FFT params,
+│   │                                regenerates all 45 figures + fit_results.pkl. Locates each wn's
+│   │                                cells dynamically (via the "target_wn = '...'" anchor cell), not by
+│   │                                hardcoded index -- those go stale if cells get inserted upstream.
+│   ├── export_comparison_csv.py    fit_results.pkl -> cht_vs_realspace_wavelength_comparison.csv
+│   └── make_overview_pptx.py       Builds slides/GMG_CHT_overview.pptx from the figures/ + comparison CSV
+│
+├── docs/                           Reference papers (Woessner et al. Nat. Mater. 2015 + SI)
+├── slides/                         Presentation decks (.pptx)
+├── webtool/                        Streamlit v1 interactive tool (click-to-place-linecut/align/q_guess).
+│                                    Has known rough edges -- not yet the primary workflow.
+└── dev_scripts_archive/            Pre-Claude-Code scratch scripts (gitignored, not part of the repo)
+```
+
+**Shared code that lives outside this repo**: `/Users/shizhe/envsetting/snippet/` -- in particular
+`extract_linecut.py` (radial_rect_profile/radial_sector_profile, the 2D-map-to-1D-linecut math) and
+`linecut_extraction.py` (Z-plane correction, extract_and_plot, plot_waterfall_3channel,
+plot_mapping_waterfall). Project-agnostic on purpose (works for G-CIPS-style data too), so it's a
+separate git checkout rather than living inside GMG/.
+
 ## Progress Log
 *   **[2026-06-15 16:48]** Analyzed *Woessner et al. Nature Materials 2015* paper and SI.
 *   **[2026-06-15 17:05]** Reviewed user's `nanoftir_Shizhe.py` to compare existing real-space fitting and FFT methods with the paper's Complex Hankel Transform (CHT) method.
@@ -89,3 +141,34 @@ plt.rcParams.update({
   `dump_cells.txt`). `data/fitting_results_comparison.csv` (860cm-1-only, pre-refactor) and
   `figures/fit_result_860_*.png` / `figures/waterfall_gmg3.png` (pre-15-wn-pipeline) are now superseded
   by the files above but were left in place pending user confirmation before deleting tracked files.
+
+## 2026-06-29 Manual linecut pipeline, shared snippet module, folder reorganization
+- Built `manual_linecut_pipeline.ipynb`: per-wn manual linecut extraction from the richer
+  `data/processed_3x1um/*.npz` maps (full O2/O3/O4 amp+phase + Z, not just one pre-extracted profile),
+  with optional inline Z-plane correction (3-point fit, points drawn on the Topography panel), two-stage
+  alignment, and CSV export to `data/graphene_3x1_manual/` in the same column format as the old data.
+  Chosen per-wn (not one shared cut geometry) because horizontal align alone can't correct for drift
+  *perpendicular* to the cut between separate scans -- confirmed real ~16px edge-position drift across
+  the 15 npz scans, but only ~3px tilt within a single scan.
+- Moved the reusable extraction/plotting code (Z-plane correction, `extract_and_plot`,
+  `plot_waterfall_3channel`, `plot_mapping_waterfall`, `lineprofile_to_store`) out of any one project's
+  notebook into `/Users/shizhe/envsetting/snippet/linecut_extraction.py` (+ `extract_linecut.py` for the
+  underlying radial profile math) -- shared across GMG and G-CIPS-style projects instead of a
+  slightly-different copy duplicated in each.
+- Fixed: `plot_waterfall_3channel` no longer draws per-point markers by default (was rendering as a
+  scatter cloud); `extract_and_plot`'s map aspect ratio bug (`aspect='auto'` stretched 3x1um maps into
+  squares); Z-plane-correction point units (`plane_points_px` -> `plane_points_um`, matching the map's
+  own axes instead of needing manual pixel conversion); `cmap_phase` default `'RdBu'` -> `'bwr_r'`.
+- Built a v1 Streamlit web tool (`webtool/`) as an interactive alternative to typing every parameter --
+  click on a map to place a linecut, click on the waterfall to align, click a spectrum to set q_guess.
+  Has known rough edges (no headless browser available to test actual click interactions); not yet the
+  primary workflow.
+- Reorganized the folder: utility scripts -> `scripts/`, reference PDFs -> `docs/`, presentation decks
+  -> `slides/`. `nanoftir_Shizhe.py`/`loadnpz.py`/both notebooks stay at the repo root (imported
+  everywhere; moving them would mean editing notebook import cells for no benefit). Each moved script
+  now `chdir`s to the repo root on startup so it runs correctly from any cwd.
+- Found + fixed a real bug surfaced by the reorg: `save_fit_results.py` and `export_comparison_csv.py`
+  hardcoded notebook cell indices to find each wn's CHT/real-space/FFT cells. Those went stale when the
+  "Amp/Phase/Z overview" section was inserted into `fitting_pipeline.ipynb` earlier, silently
+  mis-mapping cells for every wn except 860 (sits before the insertion point). Replaced with a dynamic
+  lookup keyed off each wn's own `target_wn = '...'` cell. Re-verified against known-good lambda/q/damping.
