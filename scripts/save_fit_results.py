@@ -105,7 +105,7 @@ for wn, p in wn_params.items():
         k_fit_range_cm=p['k_fit_range_cm'], x_start_cht=p['x_start_cht'], L_cutoff_cht=p['L_cutoff_cht'],
         lam0_guess_um=p['lam0_guess_um'], xr_range_rs=p['xr_range_rs'],
         fft_xr=p['fft_xr'], fft_q_guess=p['fft_q_guess'],
-        save_dir='figures', show=False)
+        save_dir='figures/graphene_3x1', show=False)
 
     print(f'Running {wn} (old baseline CHT window, no save) ...')
     old_p = old_cht_params[wn]

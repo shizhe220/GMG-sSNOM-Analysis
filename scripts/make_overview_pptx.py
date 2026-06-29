@@ -120,15 +120,15 @@ for wn in wns:
     add_text(s, margin, Inches(0.83), content_w, Inches(0.4), caption, 14, MUTED)
 
     # CHT figure, full width
-    cht_path = f"figures/cht/{wn}cm-1_cht.png"
+    cht_path = f"figures/graphene_3x1/cht/{wn}cm-1_cht.png"
     pw, ph = img_size_in(cht_path)
     cht_h = content_w * ph / pw
     cht_y = Inches(1.32)
     s.shapes.add_picture(cht_path, margin, cht_y, width=content_w, height=cht_h)
 
     # bottom row: real-space (narrower) + fft (wide), same height, centered
-    rs_path = f"figures/realspace/{wn}cm-1_realspace.png"
-    fft_path = f"figures/fft/{wn}cm-1_fft.png"
+    rs_path = f"figures/graphene_3x1/realspace/{wn}cm-1_realspace.png"
+    fft_path = f"figures/graphene_3x1/fft/{wn}cm-1_fft.png"
     rs_w_px, rs_h_px = img_size_in(rs_path)
     fft_w_px, fft_h_px = img_size_in(fft_path)
 
