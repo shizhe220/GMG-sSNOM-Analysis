@@ -283,3 +283,23 @@ plt.rcParams.update({
 - **Not done**: Phase 2 (CrSBr_Analysis / G-CIPS adopting the shared module) -- their copies
   have genuinely diverged, not just fallen behind, so this needs a function-by-function diff
   audit first. See `dispersion_fitting_migration_plan.md` Phase 2 for the plan.
+
+## 2026-07-08 Critical bug: lp2 pipeline was fitting lp1 data
+
+- Found while building batch fit-comparison figures for graphene_4x1: `load_aligned_wn_signal`'s
+  glob pattern was hardcoded to `*_AVG_lp1.csv`. Since `data/graphene_4x1_manual/` holds both
+  lp1 and lp2 CSVs for every wn, `save_fit_results_graphene_4x1_lp2.py` had been silently
+  loading and fitting **lp1 (left edge) data** with lp2-tuned CHT/real-space parameters the
+  entire time -- the "lp2" pkl/CSV/PPTX delivered earlier this session did not describe the
+  right edge at all.
+- This explains the previously-flagged oddity: 1000cm-1's CHT-vs-Hankel deviation was 60.1%
+  under the bug, now 6.5% after the fix -- consistent with the mismatch being wrong-data, not a
+  real fit-quality problem.
+- Fix: added `lp='lp1'` parameter to `load_aligned_wn_signal` and `run_wn_comparison` (default
+  preserves old behavior for single-linecut datasets), glob pattern now `*_AVG_{lp}.csv`.
+  `save_fit_results_graphene_4x1_lp{1,2}.py` now pass `lp` explicitly.
+- Verified: lp1 rerun is byte-identical (0 values changed -- it was already reading the right
+  file, just not by design). lp2 rerun: 157 of ~225 values changed, largest single lambda_p
+  delta ~181nm. Regenerated lp2's CSV/PPTX from the corrected pkl. Some wn (980/970/960/911/900)
+  still show large CHT-vs-Hankel deviation (42-48%) even with correct data -- worth revisiting
+  those k_fit_range/xr tunings separately, not something this fix addresses.
