@@ -172,3 +172,83 @@ plt.rcParams.update({
   "Amp/Phase/Z overview" section was inserted into `fitting_pipeline.ipynb` earlier, silently
   mis-mapping cells for every wn except 860 (sits before the insertion point). Replaced with a dynamic
   lookup keyed off each wn's own `target_wn = '...'` cell. Re-verified against known-good lambda/q/damping.
+
+## 2026-07-08 Multi-method fit comparison plots (CHT vs Hankel vs 1/√x)
+
+- **Motivation**: with 3 real-space fitting methods (CHT, Hankel, 1/√x) all reporting a lambda_p per wn,
+  it wasn't visually obvious which model actually tracks the data best -- only summary numbers were being
+  compared (CSV/pptx). Added two new comparison figures per wn, styled after Woessner et al. 2015 SI
+  Figure S4 (single-panel all-fits-overlaid + separate a/b/c/d panels with one map-location panel).
+- **Baseline alignment (key design decision)**: CHT fits the background-subtracted oscillation (`sig_f`,
+  mean ~0); `compare_cavity_models`'s Hankel/1-sqrtx fit whatever `y` column they're given with a free
+  baseline `B`. In `fitting_pipeline_graphene_3x1_manual.ipynb`'s existing Cell 9, that `y` column is
+  already `sig_f` (not raw O3A) -- confirmed by reading the cell -- so `B` comes out near 0 already; the
+  three fits differ from the data by (at most) that small constant `B`. All three dense fit curves are
+  plotted as `y_dense - B` (`y_dense - 0` for CHT, which has no free baseline) so everything sits on the
+  same background-subtracted axis as the plotted data points, no additional background reconstruction
+  needed. Self-checked by interpolating each dense fit curve onto the actual data x-positions and
+  confirming the residual mean is small relative to the data's own std (CHT +0.020 vs data std 0.163,
+  Hankel +0.016 vs 0.145, 1/sqrtx +0.020 vs 0.145 for 860cm-1) -- no systematic offset survives.
+- **Q factor**: unified "damping"/"γp⁻¹" (already computed identically everywhere in the codebase as
+  Re(q_p)/Im(q_p), using alpha_env as an Im(q_p) proxy for non-Hankel prefactors) under a single label
+  "Q" in the new plots' legends, alongside λp and qp (in 1e5 cm⁻¹, matching the existing CSV/print
+  convention). No new physics/formula -- purely a display-label unification per user request.
+- **New code (non-destructive -- no existing function signature/behavior changed)**:
+  - `nanoftir_Shizhe.py`: `fit_and_plot_cht`'s returned `results` dict gained 4 new keys
+    (`x_dense_um`, `fit_dense`, `q_p_1e5cm_1`, `Q`) so its already-computed dense fit curve can be reused
+    for overlay plots without re-fitting. `plot_fit_comparison_combined()` (single-panel, all 3 fits +
+    data) and `plot_fit_comparison_panels()` (a/b/c/d layout, panel (a) optional) added at end of file.
+  - `/Users/shizhe/envsetting/snippet/linecut_extraction.py`: `plot_linecut_location(ax, ...)` added --
+    a single-Axes version of `extract_and_plot`'s amp-map + ROI-rectangle overlay, for embedding as one
+    panel of a larger figure instead of its own standalone 3-panel figure.
+- **Panel (a) (map + linecut location) data source**: the ROI geometry (`center_um`/`angle_deg`/
+  `radius_um`/`rect_width_um`) used during manual extraction is not saved into the exported CSVs --
+  it only exists in `manual_linecut_pipeline.ipynb`'s per-wn `extract_and_plot(...)` call. For the
+  860cm-1 prototype, read directly from that notebook's cell: `center_um=(0.2, 0.8)`,
+  `angle_deg=DEFAULT_ANGLE_DEG=0.0`, `radius_um=DEFAULT_RADIUS_UM=2.085`,
+  `rect_width_um=DEFAULT_WIDTH_UM=0.075` (DEFAULT_* values come from that notebook's Cell 6 printed
+  output). `map_panel=None` skips panel (a) entirely (falls back to a 1x3 layout) for datasets/wn where
+  this geometry isn't available (e.g. built-in npz line profiles never manually placed).
+- **Prototyped for one wn only so far**: new cells added to `fitting_pipeline_graphene_3x1_manual.ipynb`
+  right after the existing 860cm-1 section (2 new code cells + 1 markdown header, nothing existing
+  edited), producing `figures/graphene_3x1_manual/fit_comparison/860cm-1_{combined,panels}.png`.
+  Verified by executing the actual (unmodified) notebook cells 0-16 headlessly end-to-end -- reproduces
+  the exact same lambda_p/q_p/Q as the already-saved `data/fit_results_graphene_3x1_manual.pkl` (CHT
+  451.6nm, Hankel 456.0nm, 1/sqrtx 403.1nm for 860cm-1). Not yet rolled out to the other 14 wn or to the
+  4x1 lp1/lp2 datasets -- pending user review of the 860cm-1 prototype.
+
+## 2026-07-08 Export linecut ROI geometry to CSV (replaces hardcoded/notebook-parsing lookup)
+
+- **Problem**: the 860cm-1 prototype above got panel (a)'s geometry (`center_um`/`angle_deg`/
+  `radius_um`/`rect_width_um`) by manually reading it out of `manual_linecut_pipeline.ipynb`'s source --
+  doesn't scale to the other 14 wn or the 4x1 lp1/lp2 datasets, and silently goes stale if extraction
+  parameters are ever re-tuned.
+- **Considered writing the manual geometry back into the raw npz** (it already has an `lp1`/`lp2` slot
+  and an `info.lineprofile.profiles[]` metadata block that could hold it). Rejected: that slot holds the
+  *instrument/processing-software's own auto-extracted* profile (confirmed via `info.lineprofile.
+  profiles[0].native_start_px/end_px` in `data/processed_3x1um/860cm-1_AVG.npz`) -- the whole reason
+  manual extraction exists is that this auto placement often isn't good enough, so overwriting it would
+  destroy the auto-vs-manual comparison and there'd be no way to recover the original. `np.savez` also
+  has no in-place partial update (always rewrites the full archive), so every re-tune of any one wn would
+  mean rewriting that wn's entire raw 2D-map file -- higher blast radius than corrupting a small sidecar,
+  and opaque/undiffable in git (binary blob) vs a small text file.
+- **Fix**: added a geometry-export cell (non-destructive append, after the existing CSV-export cell) to
+  both `manual_linecut_pipeline.ipynb` and `manual_linecut_pipeline_graphene_4x1.ipynb`. Writes one
+  combined `linecut_geometry.csv` per dataset (one row per wn, or per wn+edge for 4x1's lp1/lp2) into the
+  same folder as the linecut CSVs (`data/graphene_3x1_manual/linecut_geometry.csv`,
+  `data/graphene_4x1_manual/linecut_geometry.csv`) -- one file per dataset rather than one per wn, both
+  to match the existing "one combined CSV, one row per wn" convention already used by the comparison CSVs
+  and so the full history is visible in a single file's git log instead of 15+ separate file histories.
+  Columns: `wn, lp, center_x_um, center_y_um, angle_deg, radius_um, rect_width_um, align_bg_loc_nm,
+  realign_nm` (the last two document the alignment shift already baked into each CSV's `distance_nm`,
+  free to include alongside the ROI geometry).
+- Generated both files now by executing the two extraction notebooks headlessly end-to-end (Agg backend,
+  stripped `%matplotlib`/`get_ipython()` magic calls that don't work outside a real kernel). Verified via
+  `git status`/`git diff --stat` that this re-run reproduced the existing committed linecut CSVs
+  byte-for-byte (fully deterministic given unchanged cell parameters) -- only the new
+  `linecut_geometry.csv` appeared as untracked, nothing existing was altered.
+- Updated `fitting_pipeline_graphene_3x1_manual.ipynb`'s 860cm-1 panel-(a) cell (added this session, not
+  original pipeline code) to read `{data_dir}/linecut_geometry.csv` and look up the row matching
+  `target_wn`, instead of the hardcoded tuple from before -- falls back to `map_panel = None` if the file
+  or that wn's row is missing. Re-verified headlessly: reproduces the identical `center_um=(0.2, 0.8),
+  angle_deg=0.0` panel (a) as the hardcoded version.

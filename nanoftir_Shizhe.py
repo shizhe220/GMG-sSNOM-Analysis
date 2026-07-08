@@ -3784,6 +3784,14 @@ def fit_and_plot_cht(x_f, sig_f, wn, x_start_cht=0.22, L_cutoff_cht=1.2,
         wn=wn, q_re=q_re_fit, q_im=q_im_fit, lambda_p_nm=lam_cht_nm,
         damping=damping_cht, rel_rmse_k=rel_rmse_k,
         k_fit_range_cm=k_fit_range_cm, k_linked_guess_cm=k_linked_guess_cm,
+        # Dense (x, Re-part total-fit) curve on the same background-subtracted
+        # oscillation axis as sig_f -- for overlaying onto other fit methods'
+        # curves (see plot_fit_comparison_combined/plot_fit_comparison_panels).
+        # Q = q_re/q_im, the standard plasmon propagation quality factor
+        # (same ratio as 'damping' above, aliased for a consistent label
+        # across CHT/Hankel/1-sqrtx in the comparison plots).
+        x_dense_um=x_dense, fit_dense=mod_sig_dense,
+        q_p_1e5cm_1=q_re_fit / 10.0, Q=damping_cht,
     )
     return results, fig
 
@@ -3875,3 +3883,146 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
     results['fft_damping'] = None  # not estimated from the FFT peak
 
     return results, (fig_cht, fig_rs, fig_fft)
+
+
+# ============================================================================
+# Multi-method fit comparison plots (CHT vs Hankel vs 1/sqrtx), added to let
+# the user directly judge which real-space model best matches the data for a
+# given wavenumber, instead of only comparing summary lambda_p numbers.
+# Non-destructive additions -- existing functions above are untouched.
+# ============================================================================
+
+_FIT_COMPARISON_COLORS = {'cht': '#b2182b', 'hankel': '#1c7293', '1/sqrtx': '#e08214'}
+_FIT_COMPARISON_LABELS = {'cht': 'CHT', 'hankel': 'Hankel', '1/sqrtx': r'1/$\sqrt{x}$'}
+
+
+def _fit_comparison_curves(cht_results, hankel_out, sqrtx_out):
+    """
+    Build a uniform per-method dict (x_dense_nm, y_dense, lambda_p_nm,
+    q_p_1e5cm-1, Q) on the *background-subtracted oscillation* axis -- CHT's
+    native domain (sig_f, mean ~0). Hankel/1-sqrtx (fit on raw O3A with a
+    free baseline B) are shifted by -B so all three sit on the same axis as
+    the plotted data points.
+    """
+    curves = {}
+    curves['cht'] = dict(
+        x_dense_nm=cht_results['x_dense_um'] * 1000, y_dense=cht_results['fit_dense'],
+        lambda_p_nm=cht_results['lambda_p_nm'], q_p_1e5cm_1=cht_results['q_p_1e5cm_1'],
+        Q=cht_results['Q'],
+    )
+    for pf, out in (('hankel', hankel_out), ('1/sqrtx', sqrtx_out)):
+        p, d = out['params'], out['derived']
+        damp_key = 'q_imag_um^-1' if pf == 'hankel' else 'alpha_env_um^-1'
+        Q = d['q_rad_per_um'] / p[damp_key] if p[damp_key] > 1e-9 else np.inf
+        curves[pf] = dict(
+            x_dense_nm=out['x_dense_um'] * 1000, y_dense=out['y_dense'] - p['B'],
+            lambda_p_nm=p['lambda_p_um'] * 1000, q_p_1e5cm_1=d['q_cm^-1'] / 1e5,
+            Q=Q,
+        )
+    return curves
+
+
+def plot_fit_comparison_combined(x_f, sig_f, cht_results, hankel_out, sqrtx_out, wn,
+                                  xlim=None, ylim=None, figsize=(7.5, 5.5), save_path=None):
+    """
+    Figure 1: single panel, all three fits (CHT/Hankel/1-sqrtx) overlaid on
+    the background-subtracted data points, legend showing lambda_p/q_p/Q per
+    method. x_f in um, sig_f background-subtracted O3A (same arrays already
+    used to feed fit_and_plot_cht / compare_cavity_models upstream).
+    """
+    curves = _fit_comparison_curves(cht_results, hankel_out, sqrtx_out)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=100)
+    ax.plot(x_f * 1000, sig_f, 'o', ms=4, color='#555555', alpha=0.6, zorder=5, label='Data')
+
+    for pf in ('cht', 'hankel', '1/sqrtx'):
+        c = curves[pf]
+        label = (f"{_FIT_COMPARISON_LABELS[pf]}: "
+                 f"$\\lambda_p$={c['lambda_p_nm']:.1f} nm, "
+                 f"$q_p$={c['q_p_1e5cm_1']:.2f}"
+                 r"$\times10^5$cm$^{-1}$, "
+                 f"Q={c['Q']:.1f}")
+        ax.plot(c['x_dense_nm'], c['y_dense'], lw=2, color=_FIT_COMPARISON_COLORS[pf], label=label)
+
+    ax.axhline(0, color='gray', ls='--', lw=0.8, alpha=0.6)
+    ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
+    ax.set_ylabel(r'Re $\xi_{\mathbf{opt}}$ (a.u., bg-subtracted)', fontweight='bold')
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+    ax.set_title(f"Fit Comparison: {wn}", fontsize=14, fontweight='bold')
+    ax.legend(frameon=False, fontsize=10, loc='best')
+    ax.tick_params(direction='in', top=True, right=True)
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+
+    return fig, curves
+
+
+def plot_fit_comparison_panels(x_f, sig_f, cht_results, hankel_out, sqrtx_out, wn,
+                                map_panel=None, xlim=None, ylim=None,
+                                figsize=None, save_path=None):
+    """
+    Figure 2: (a) 2D map + linecut location (optional -- pass map_panel=None
+    to skip it and lay out only the 3 fit panels), (b)/(c)/(d) CHT/Hankel/
+    1-sqrtx each shown alone against the data points.
+
+    map_panel : None, or a dict with keys amp_data, pixelsize_um, center_um,
+        angle_deg, radius_um, rect_width_um -- everything
+        snippet.linecut_extraction.plot_linecut_location needs to draw panel
+        (a). Only available when the linecut was manually placed (i.e. its
+        geometry is recoverable) -- pass None for e.g. built-in npz line
+        profiles with no recorded extraction geometry.
+    """
+    curves = _fit_comparison_curves(cht_results, hankel_out, sqrtx_out)
+    n_panels = 4 if map_panel is not None else 3
+    if figsize is None:
+        figsize = (4.6 * n_panels, 4.3)
+
+    fig, axes = plt.subplots(1, n_panels, figsize=figsize, dpi=100)
+    axes = np.atleast_1d(axes)
+    panel_labels = ['a', 'b', 'c', 'd'] if n_panels == 4 else ['a', 'b', 'c']
+
+    ax_idx = 0
+    if map_panel is not None:
+        from snippet.linecut_extraction import plot_linecut_location
+        plot_linecut_location(axes[0], **map_panel)
+        axes[0].text(0.03, 0.96, f"({panel_labels[0]})", transform=axes[0].transAxes,
+                     fontsize=14, fontweight='bold', va='top', ha='left', color='white')
+        ax_idx = 1
+
+    for pf in ('cht', 'hankel', '1/sqrtx'):
+        ax = axes[ax_idx]
+        c = curves[pf]
+        ax.plot(x_f * 1000, sig_f, 'o', ms=4, color='#555555', alpha=0.6, zorder=5, label='Data')
+        ax.plot(c['x_dense_nm'], c['y_dense'], lw=2, color=_FIT_COMPARISON_COLORS[pf], label='Fit')
+        ax.axhline(0, color='gray', ls='--', lw=0.8, alpha=0.6)
+        ax.set_xlabel('Distance from edge (nm)', fontweight='bold')
+        if ax_idx == (1 if map_panel is not None else 0):
+            ax.set_ylabel(r'Re $\xi_{\mathbf{opt}}$ (a.u.)', fontweight='bold')
+        if xlim is not None:
+            ax.set_xlim(xlim)
+        if ylim is not None:
+            ax.set_ylim(ylim)
+        ax.set_title(_FIT_COMPARISON_LABELS[pf], fontsize=13, fontweight='bold')
+        ax.text(0.03, 0.96, f"({panel_labels[ax_idx]})", transform=ax.transAxes,
+                fontsize=14, fontweight='bold', va='top', ha='left')
+        txt = (rf"$\lambda_p$={c['lambda_p_nm']:.1f} nm"
+               "\n" rf"$q_p$={c['q_p_1e5cm_1']:.2f}$\times10^5$cm$^{{-1}}$"
+               "\n" rf"Q={c['Q']:.1f}")
+        ax.text(0.97, 0.04, txt, transform=ax.transAxes, fontsize=10, va='bottom', ha='right',
+                bbox=dict(boxstyle='round,pad=0.25', fc='white', ec='0.8', alpha=0.9))
+        ax.legend(frameon=False, fontsize=9, loc='upper right')
+        ax.tick_params(direction='in', top=True, right=True)
+        ax_idx += 1
+
+    fig.suptitle(f"{wn}: Fit Comparison Panels", fontsize=14, fontweight='bold')
+    fig.tight_layout()
+
+    if save_path:
+        fig.savefig(save_path, dpi=200, bbox_inches='tight')
+
+    return fig, curves
