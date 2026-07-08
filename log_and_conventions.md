@@ -252,3 +252,34 @@ plt.rcParams.update({
   `target_wn`, instead of the hardcoded tuple from before -- falls back to `map_panel = None` if the file
   or that wn's row is missing. Re-verified headlessly: reproduces the identical `center_um=(0.2, 0.8),
   angle_deg=0.0` panel (a) as the hardcoded version.
+
+## 2026-07-08 Cross-project index + dispersion-fitting engine migrated to shared snippet/
+
+- Set up cross-project infrastructure after discovering `nanoftir_Shizhe.py` (the CHT/Hankel/
+  1-sqrtx/FFT dispersion-fitting engine, originally authored by Yinming Shao) had silently
+  forked into 3 diverged copies across GMG (most current), CrSBr_Analysis (634 lines behind),
+  and an older ancestor `nanoftir.py` in G-CIPS. Added `~/.claude/CLAUDE.md` (global, always
+  loaded) pointing at `/Users/shizhe/envsetting/PROJECTS.md` (index of all of Shizhe's
+  experimental-data-analysis projects and what each depends on in the shared `snippet/`
+  library) and `dispersion_fitting_migration_plan.md` (the migration plan, written so a future
+  session in any directory can pick it up without relying on this conversation's memory).
+- **Phase 1 executed**: extracted `fit_cavity_prefactor_compare`, `compare_cavity_models`,
+  `plot_channel_fft`, `complex_hankel_transform`, `fit_cht_peaks`, `fit_and_plot_cht`,
+  `plot_fit_comparison_combined`, `plot_fit_comparison_panels` out of `nanoftir_Shizhe.py` into
+  `/Users/shizhe/envsetting/snippet/dispersion_fitting.py`. `load_aligned_wn_signal` and
+  `run_wn_comparison` stayed here (GMG-specific `data_dir` defaults). `nanoftir_Shizhe.py`
+  shrank 4028 -> 2818 lines and now re-exports the moved names
+  (`from snippet.dispersion_fitting import (...)`) -- every existing notebook cell
+  (`nanoftir.fit_and_plot_cht(...)` etc.) kept working with zero edits.
+- **Verification**: re-ran all 3 `save_fit_results_graphene_*.py` scripts post-migration and
+  diffed every value in the resulting `.pkl` files against the pre-migration versions -- zero
+  numeric difference across every wn/method. Re-executed the 860cm-1 fit-comparison prototype
+  cells headlessly, identical result. Caught and fixed a real bug during the move itself (not
+  in the shipped result): the line-deletion script initially processed two overlapping ranges
+  out of order, which would have deleted the wrong 393-line block (dropping `plot_stacked_fft`,
+  which should have stayed, while leaving part of `plot_channel_fft`, which should have moved) --
+  caught by the syntax + remaining-function-list check before any commit; reverted via
+  `git checkout` and redone with ranges sorted strictly descending plus an assertion.
+- **Not done**: Phase 2 (CrSBr_Analysis / G-CIPS adopting the shared module) -- their copies
+  have genuinely diverged, not just fallen behind, so this needs a function-by-function diff
+  audit first. See `dispersion_fitting_migration_plan.md` Phase 2 for the plan.
