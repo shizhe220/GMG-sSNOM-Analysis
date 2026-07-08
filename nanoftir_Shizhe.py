@@ -2693,21 +2693,26 @@ def batch_analyze_and_plot_stacked_ffts(amplp, phaselp,
 
 
 
-def load_aligned_wn_signal(wn, align_shift_nm, data_dir='data/graphene_3x1', L_cutoff_fit=1.5):
+def load_aligned_wn_signal(wn, align_shift_nm, data_dir='data/graphene_3x1', L_cutoff_fit=1.5, lp='lp1'):
     """
     Load one wavenumber's averaged line-profile CSV, shift its edge to x=0 using
     align_shift_nm, and background-subtract O3A with the same savgol window used
     throughout fitting_pipeline.ipynb. Returns the raw aligned dataframe plus the
     masked/background-subtracted (x_f, sig_f) used by the CHT and real-space fits.
+
+    lp : which linecut to load when a data_dir holds more than one per wn (e.g.
+        graphene_4x1_manual's lp1/lp2 edges both live in the same folder) --
+        matches the '_AVG_{lp}.csv' filename suffix. Default 'lp1' preserves
+        old behavior for datasets with only one linecut per wn.
     """
     import glob, re
-    file_paths = glob.glob(f'{data_dir}/*_{wn.replace("cm-1","")}*AVG_lp1.csv')
+    file_paths = glob.glob(f'{data_dir}/*_{wn.replace("cm-1","")}*AVG_{lp}.csv')
     if not file_paths:
         # fall back to scanning all files and matching the leading wavenumber
-        file_paths = [p for p in glob.glob(f'{data_dir}/*_AVG_lp1.csv')
+        file_paths = [p for p in glob.glob(f'{data_dir}/*_AVG_{lp}.csv')
                       if re.search(rf'(?<!\d){re.escape(wn.replace("cm-1",""))}cm-1', p)]
     if not file_paths:
-        raise FileNotFoundError(f"No data file found for {wn} in {data_dir}")
+        raise FileNotFoundError(f"No data file found for {wn} (lp={lp!r}) in {data_dir}")
 
     df_target = pd.read_csv(file_paths[0])
     df_target['distance_um'] = (df_target['distance_nm'] - align_shift_nm) / 1000.0
@@ -2731,13 +2736,18 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
                        k_fit_range_cm=(0.5, 6.0), x_start_cht=0.22, L_cutoff_cht=1.2,
                        L_cutoff_fit=1.5, lam0_guess_um=None, xr_range_rs=(0.22, 1.2),
                        fft_xr=None, fft_q_guess=None, data_dir='data/graphene_3x1',
-                       save_dir=None, show=True):
+                       lp='lp1', save_dir=None, show=True):
     """
     One-call replacement for the per-wavenumber block that used to be copy-pasted
     15 times in fitting_pipeline.ipynb (data load+align -> CHT fit -> real-space
     hankel/1-sqrtx fit -> FFT comparison). Each wavenumber keeps its own cell in
     the notebook; only the per-wn tunable parameters (k_fit_range_cm,
     k_linked_guess_cm, lam0_guess_um, fft_q_guess, ...) need to be passed in.
+
+    lp : which linecut to load, forwarded to load_aligned_wn_signal -- matters
+        whenever data_dir holds more than one linecut per wn (e.g.
+        graphene_4x1_manual's lp1/lp2 edges). Default 'lp1' preserves old
+        behavior for single-linecut datasets.
 
     If save_dir is given, saves the three figures to
     {save_dir}/cht/{wn}_cht.png, {save_dir}/realspace/{wn}_realspace.png,
@@ -2747,7 +2757,7 @@ def run_wn_comparison(wn, align_shift_nm, k_linked_guess_cm,
     Returns a dict with the CHT results plus the real-space hankel/1-sqrtx
     lambda_p/RMSE/AIC, suitable for assembling a comparison table across wn.
     """
-    loaded = load_aligned_wn_signal(wn, align_shift_nm, data_dir=data_dir, L_cutoff_fit=L_cutoff_fit)
+    loaded = load_aligned_wn_signal(wn, align_shift_nm, data_dir=data_dir, L_cutoff_fit=L_cutoff_fit, lp=lp)
     df_target, x_f, sig_f = loaded['df_target'], loaded['x_f'], loaded['sig_f']
 
     if lam0_guess_um is None:

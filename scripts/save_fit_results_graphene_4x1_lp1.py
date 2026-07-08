@@ -91,7 +91,7 @@ for wn, p in wn_params.items():
         k_fit_range_cm=p['k_fit_range_cm'], x_start_cht=p['x_start_cht'], L_cutoff_cht=p['L_cutoff_cht'],
         lam0_guess_um=p['lam0_guess_um'], xr_range_rs=p['xr_range_rs'],
         fft_xr=p['fft_xr'], fft_q_guess=p['fft_q_guess'],
-        data_dir=DATA_DIR, save_dir=SAVE_DIR, show=False)
+        data_dir=DATA_DIR, lp='lp1', save_dir=SAVE_DIR, show=False)
 
     all_results[wn] = {
         'cht': {
