@@ -340,4 +340,32 @@ plt.rcParams.update({
   independent confirmation via a completely different (rp-simulation-based) method that those
   specific wn's fits are the weak point, not new noise introduced by this notebook.
 - `ytickspacing=10` passed to `rp_schematic` (default 200cm-1 -- with our ~160cm-1-wide freq
-  window that rendered only one labeled y-tick).
+  window that rendered only one labeled y-tick). Later widened to `ytickspacing=20` per user
+  feedback (10 was too dense).
+
+## 2026-07-09/10 Restyled compare_cavity_models; new fit-comparison overview PPTX
+
+- **`compare_cavity_models` restyle** (`snippet/dispersion_fitting.py`): matched the visual
+  style of `plot_fit_comparison_combined`/`plot_fit_comparison_panels` -- gray data dots (was
+  black), per-curve lambda_p/q_p/Q folded into the legend (was a separate stats textbox), bold
+  panel letters (a)/(b), bold axis labels/title. `ylim` default changed from a stale hardcoded
+  `(0.5, 0.9)` to `None` (auto-scale) -- grepped all 65 call sites across every GMG
+  notebook/script and confirmed every one already passes an explicit, per-wn-computed `ylim`
+  (e.g. `(sig_f.min()*1.5, sig_f.max()*0.5)`), so xlim/ylim was *already* being judged
+  automatically from each wn's own data, never a fixed standard or manually eyeballed value --
+  same answer applies to `plot_fit_comparison_combined`/`panels`, which also default to
+  `xlim=ylim=None` (matplotlib auto-scale) and were never called with an explicit override.
+  Purely cosmetic -- `fit_cavity_prefactor_compare` (the fitting math) untouched, return
+  signature `(outs, fig, (ax, axr))` unchanged. Verified by re-running all 3
+  `save_fit_results_graphene_*.py` scripts and diffing every pkl value pre/post -- zero
+  numeric difference. Regenerated the 45 affected `realspace/{wn}_realspace.png` figures.
+- **New `scripts/make_fit_comparison_pptx.py`** -> `slides/GMG_fit_comparison_overview.pptx`
+  (49 slides, font Aptos): title + one section-divider per dataset + one slide per wn
+  (`{wn}cm-1_combined.png` on top, `{wn}cm-1_panels.png` below). Caught a real layout bug in
+  self-check before shipping: a fixed-guess `top_h=3.55in` for the top picture, combined with
+  the bottom picture's own aspect ratio at full content width, pushed the bottom image 0.13in
+  past the slide edge on every wn slide -- no PPTX renderer available in this environment, so
+  verified via python-pptx shape-bounds introspection (`shape.left/top/width/height` vs
+  `prs.slide_width/height`) across all 195 shapes in the deck instead of visual inspection.
+  Fixed by deriving `top_h` from slide height minus the aspect-locked bottom picture height
+  rather than guessing a fixed number.
