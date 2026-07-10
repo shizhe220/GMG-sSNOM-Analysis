@@ -1,58 +1,9 @@
-# Log & Conventions
+# Progress Log
 
-## Folder Structure (as of 2026-06-29)
+Stable folder structure + conventions/rules moved to `CLAUDE.md` (2026-07-10) -- this file is
+now the dated history only (why things are the way they are), not auto-loaded every session.
+Read it deliberately when historical context is needed.
 
-```
-GMG/
-├── fitting_pipeline.ipynb        CHT/Hankel/1-sqrtx/FFT fitting, per wn (15 cells each)
-├── manual_linecut_pipeline.ipynb Manual per-wn linecut extraction from processed_3x1um/*.npz
-├── nanoftir_Shizhe.py             Core fitting module (CHT, real-space, FFT) -- imported by
-│                                  both notebooks + webtool/. Kept at root: moving it would
-│                                  require editing every notebook's import cell for no benefit.
-├── loadnpz.py                     Reader for the FwdBwd .npz summary format (2D channels +
-│                                  ROI/line-profile metadata). Also kept at root for the same reason.
-├── log_and_conventions.md         This file.
-│
-├── data/
-│   ├── processed_3x1um/           Raw .npz per wn (full 2D O2/O3/O4 amp+phase + Z maps)
-│   ├── graphene_3x1/               Old CSV-based line profiles (pre-npz pipeline)
-│   ├── graphene_3x1_manual/        CSV export from manual_linecut_pipeline.ipynb (same columns
-│   │                                as graphene_3x1/, drop-in replacement -- point fitting_pipeline's
-│   │                                data_dir here to fit the manually-extracted+aligned linecuts)
-│   ├── fit_results.pkl             Per-wn lambda/q/damping for CHT/Hankel/1-sqrtx/FFT
-│   └── cht_vs_realspace_wavelength_comparison.csv
-│
-├── figures/
-│   ├── cht/ realspace/ fft/        Per-wn fit figures (15 each)
-│   ├── cht_diagnostics/            |T(k)| peak-location diagnostics (960-1000cm-1 k_fit_range issue)
-│   ├── manual_linecut/             Z-plane-correction checks + waterfall from manual_linecut_pipeline
-│   ├── overview/                   Amp/Phase/Z overview + waterfall snapshots
-│   └── q_vs_wn_*.png               Combined + per-method momentum-vs-wavenumber summary plots
-│
-├── scripts/                        Standalone regeneration scripts (not imported by either notebook).
-│   │                                Each chdir's to the repo root on startup (computed from __file__),
-│   │                                so they can be run from anywhere, not just when cwd is the repo root.
-│   ├── save_fit_results.py         Re-parses fitting_pipeline.ipynb's current per-wn CHT/RS/FFT params,
-│   │                                regenerates all 45 figures + fit_results.pkl. Locates each wn's
-│   │                                cells dynamically (via the "target_wn = '...'" anchor cell), not by
-│   │                                hardcoded index -- those go stale if cells get inserted upstream.
-│   ├── export_comparison_csv.py    fit_results.pkl -> cht_vs_realspace_wavelength_comparison.csv
-│   └── make_overview_pptx.py       Builds slides/GMG_CHT_overview.pptx from the figures/ + comparison CSV
-│
-├── docs/                           Reference papers (Woessner et al. Nat. Mater. 2015 + SI)
-├── slides/                         Presentation decks (.pptx)
-├── webtool/                        Streamlit v1 interactive tool (click-to-place-linecut/align/q_guess).
-│                                    Has known rough edges -- not yet the primary workflow.
-└── dev_scripts_archive/            Pre-Claude-Code scratch scripts (gitignored, not part of the repo)
-```
-
-**Shared code that lives outside this repo**: `/Users/shizhe/envsetting/snippet/` -- in particular
-`extract_linecut.py` (radial_rect_profile/radial_sector_profile, the 2D-map-to-1D-linecut math) and
-`linecut_extraction.py` (Z-plane correction, extract_and_plot, plot_waterfall_3channel,
-plot_mapping_waterfall). Project-agnostic on purpose (works for G-CIPS-style data too), so it's a
-separate git checkout rather than living inside GMG/.
-
-## Progress Log
 *   **[2026-06-15 16:48]** Analyzed *Woessner et al. Nature Materials 2015* paper and SI.
 *   **[2026-06-15 17:05]** Reviewed user's `nanoftir_Shizhe.py` to compare existing real-space fitting and FFT methods with the paper's Complex Hankel Transform (CHT) method.
 *   **[2026-06-15 17:21]** Created implementation plan to add CHT to `nanoftir_Shizhe.py` and build an interactive `.ipynb` pipeline.
@@ -71,36 +22,6 @@ separate git checkout rather than living inside GMG/.
 *   **[2026-06-17 10:38]** Fixed a critical bug where the new pipeline fed raw `O3A` amplitude to the CHT algorithm by restoring the `savgol_filter` background subtraction step before fitting.
 *   **[2026-06-17 10:49]** Upgraded waterfall visualization aesthetics: enforced `Z_nm_custom = Z_nm_corrected - min`, implemented separate `normalize_A` and `normalize_P` flags, utilized `coolwarm` colormap, removed Y-ticks, and exposed vertical spacing variables `offset_A`, `offset_P`, and `offset_Z`.
 *   **[2026-06-17 13:26]** Reversed the sorting of wavenumbers in the waterfall plot generation (`reverse=True`) to adhere to the convention of plotting higher wavenumbers at the top and lower wavenumbers at the bottom.
-
-## Conventions & Rules
-
-### 1. Extensive Logging Policy
-*   **Requirement**: Every modification to code, parameters, or logic must be recorded in the Progress Log with an exact timestamp `[YYYY-MM-DD HH:MM]`.
-*   **Detail Level**: Logs must specify *what* parameter was changed (e.g., $xr$, $lam0\_guess$, boundary index), *why* it was changed, and *where* it was modified.
-
-### 1. Code modification policy
-*   **Non-destructive**: All new core mathematical functions (e.g., `complex_hankel_transform`) will be appended to existing modules (`nanoftir_Shizhe.py`) without altering the signature or behavior of existing functions (like `joint_fit` or `plot_nf_fft`).
-
-### 2. Plotting Style (APS Standard)
-All generated plots MUST strictly adhere to the following `matplotlib` configuration based on the user's provided example:
-```python
-plt.rcParams.update({
-    'font.size': 12, 
-    'font.family': 'Arial',
-    'axes.linewidth': 1.5, 
-    'xtick.major.width': 1.5, 
-    'ytick.major.width': 1.5,
-    'xtick.direction': 'in', 
-    'ytick.direction': 'in', 
-    'xtick.top': True,
-    'ytick.right': True
-})
-```
-*   **Labels**: Use `fontweight='bold'` for `xlabel` and `ylabel`.
-*   **Legends**: `frameon=False`, `fontsize=12`.
-*   **Math**: Use LaTeX formatting in strings (e.g., `r'Frequency (cm$^{-1}$)'`).
-*   **Panel Labels**: Placed at top-left inside the panel `(a), (b), (c)` using `ax.text` with `fontweight='bold'`, `fontsize=14`.
-
 
 ## 2026-06-17 CHT Enhancements
 - Added multi-peak support (num_peaks parameter) to the Complex Hankel Transform (CHT) fitting algorithm in nanoftir_Shizhe.py.
