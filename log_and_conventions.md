@@ -303,3 +303,41 @@ plt.rcParams.update({
   delta ~181nm. Regenerated lp2's CSV/PPTX from the corrected pkl. Some wn (980/970/960/911/900)
   still show large CHT-vs-Hankel deviation (42-48%) even with correct data -- worth revisiting
   those k_fit_range/xr tunings separately, not something this fix addresses.
+
+## 2026-07-08 Im(r_p) dispersion maps: extracted q_p vs simulated multilayer reflection
+
+- New `rp_dispersion_plot.ipynb`: for each of the 3 linecut datasets (graphene_3x1_manual =
+  "Gr/SiO2(300nm)/Si"; graphene_4x1_manual lp1 = "MoO3(4.2nm)/Gr/SiO2/Si -- edge"; lp2 = "...--
+  interior"), computes Im(r_p)(q, omega) via `snippet.nearfield.rp_schematic`
+  (`NearFieldOptics.Materials.AnisotropicMaterial` + `LayeredMediaTM`, same engine
+  `response_Shizhe.ipynb` uses for doped graphene/CIPS and `CrSBr_Rp_calculation` uses for
+  CrSBr) and overlays the CHT/Hankel/1-sqrtx/FFT q_p points from `data/fit_results_graphene_*.pkl`.
+- MoO3 modeled as `M.AnisotropicMaterial(eps_infinity=[4,5.2,2.4], phonon_params=[...])` per
+  https://onlinelibrary.wiley.com/doi/abs/10.1002/adma.201908176 (in-plane x=y: wLO=972 gLO=4
+  wTO=820 gTO=4; out-of-plane z: wLO=1004 gLO=2 wTO=958 gTO=2) -- confirmed the library's
+  `get_phonons()` expects `(w_LO, g_LO, w_TO, g_TO)` per mode, which is already the order the
+  reference paper's numbers were given in (no reordering needed, unlike CrSBr_Rp.py's own
+  `convert_modes()` which had to reorder from a different raw tuple convention).
+- **E_F fit per method per dataset (12 fits)**, not one E_F per dataset: initial attempt used a
+  single E_F per dataset (from the user's reference table: edge=0.65eV, interior=0.62eV,
+  graphene-only=0.48eV) applied to all 4 methods' panels -- only the method that table value
+  actually corresponded to (apparently CHT) hugged the ridge; Hankel/1-sqrtx/FFT visibly missed
+  it, since each method's own q_p extraction doesn't agree exactly at a given wn. Switched to
+  fitting E_F independently per method: for a trial E_F, evaluate Im(r_p) at the exact (q_i, w_i)
+  data points (diagonal of the freq x q grid `reflection_p` returns, converted to plain
+  `np.ndarray` first -- passing the library's native AWA-wrapped array straight into
+  `scipy.optimize.minimize_scalar` throws `IndexError` from `common/baseclasses.py`'s
+  `inheriting_operator`), sum, maximize via bounded 1D `minimize_scalar`. gamma=20cm-1 fixed
+  throughout (per the reference figures). Results: 3x1 {cht:0.51, hankel:0.50, sqrtx:0.50,
+  fft:0.65}, lp1/edge {cht:0.77, hankel:0.77, sqrtx:0.77, fft:0.70}, lp2/interior {cht:0.72,
+  hankel:0.92, sqrtx:0.96, fft:0.51} -- close to but not identical to the user's reference table
+  (different fitting method/objective, not expected to match exactly).
+- **Self-check finding (not a bug)**: 3x1_manual and lp1(edge) show all 4 methods' points
+  tracking the ridge cleanly after the per-method E_F fit. lp2(interior) does not -- points at
+  950-990cm-1 sit systematically off the ridge across all 4 methods, while 860-940 and 1000cm-1
+  track fine. This lines up exactly with the 2026-07-08 entry above flagging
+  980/970/960/911/900cm-1 as still having large CHT-vs-Hankel disagreement even post-bugfix --
+  independent confirmation via a completely different (rp-simulation-based) method that those
+  specific wn's fits are the weak point, not new noise introduced by this notebook.
+- `ytickspacing=10` passed to `rp_schematic` (default 200cm-1 -- with our ~160cm-1-wide freq
+  window that rendered only one labeled y-tick).
