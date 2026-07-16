@@ -741,3 +741,25 @@ Read it deliberately when historical context is needed.
   even computed anymore (only `peaks[-1]` is used). Revisit by re-adding a
   `peaks[0]`-based column if/when the user wants to pursue this again, ideally with more
   wn past 911cm-1 where the two peaks may separate further.
+
+## 2026-07-16 Save all 3 FFT channels (amp/phase/complex) to CSV, selectable in notebook
+
+- User noticed `plot_channel_fft` always Lorentzian-fits all 3 spectra (amp/phase/
+  complex) internally in one call, but the script only pulled out and saved whichever
+  one `FFT_CHANNEL` pointed at -- the other two were computed then silently discarded,
+  so comparing channels meant re-running the whole (slow) script. Confirmed via a direct
+  read of the script before this round's CSV had a single `fft_q`/`fft_q_fwhm` pair.
+- **`scripts/peak_spacing_crosscheck_graphene_4x1_lp1.py`**: replaced `FFT_CHANNEL` (one
+  string) with `FFT_CHANNELS = ['amp', 'phase', 'complex']` (a list); the main loop now
+  saves all 3 to the CSV as `fft_q_amp`/`fft_q_amp_fwhm`, `fft_q_phase`/
+  `fft_q_phase_fwhm`, `fft_q_complex`/`fft_q_complex_fwhm` (each still `peaks[-1]/2`, the
+  physics-based "always 2q" convention from the entry above, per channel). Re-ran the
+  script -- all 3 channels agree closely (e.g. 911cm-1: amp=1.449, phase=1.439,
+  complex=1.449; 860cm-1, the noisiest wn: amp=0.963, phase=0.986, complex=0.958),
+  amp and complex nearly identical throughout, phase slightly more scattered.
+- **`rp_dispersion_plot.ipynb` section 8**: added `FFT_CHANNEL_NB = 'amp'` right after
+  the CSV load, `sources_ps`'s fft entry now reads `fft_q_{FFT_CHANNEL_NB}`/
+  `fft_q_{FFT_CHANNEL_NB}_fwhm` dynamically -- switch channel and re-run just this cell,
+  no script re-run needed. Re-executed with the default (`amp`), reproduces the prior
+  E_F=0.695eV and all 9 panels unchanged (byte-for-byte content, since `amp` was already
+  the value being used).

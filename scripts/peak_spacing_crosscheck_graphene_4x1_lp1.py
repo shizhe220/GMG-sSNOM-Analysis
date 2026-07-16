@@ -77,7 +77,14 @@ WN_PARAMS = {
 # unconstrained at 900cm-1 (FWHM=1.2) and undershot the ridge at 911cm-1, so it's dropped
 # here rather than plotted as if it were a validated "q" measurement. fft_q = peaks[-1]/2
 # for ALL wn now (last peak = 2q, works whether 1 or 2 peaks were fit).
-FFT_CHANNEL = 'amp'  # 'amp' | 'phase' | 'complex' -- which plot_channel_fft spectrum to read peaks from
+#
+# plot_channel_fft always Lorentzian-fits all 3 spectra (amp/phase/complex) internally in
+# one call -- previously only the FFT_CHANNEL-selected one was pulled out and the other two
+# were silently discarded (computed but not saved), so switching channels meant re-running
+# this whole script (the slow part is CHT/Hankel/sqrtx/peak-spacing, not FFT itself, but
+# there was no way to compare channels without a re-run). Now all 3 are saved to the CSV
+# (fft_q_amp/fft_q_phase/fft_q_complex + _fwhm) so the notebook can switch interactively.
+FFT_CHANNELS = ['amp', 'phase', 'complex']
 FFT_PARAMS = {
     860: dict(xr=(0.31, 1.2), q_guess=[1.8], search_window=0.2, fit_window=0.5),
     870: dict(xr=(0.36, 1.5), q_guess=[2],   search_window=0.3, fit_window=0.3),
@@ -100,11 +107,12 @@ for wn, p in WN_PARAMS.items():
     cht_q = cht_results['q_p_1e5cm_1']
 
     # FFT: Lorentzian peak fit (peak_method='lorentzian' + fit_window, see
-    # envsetting/snippet/dispersion_fitting.py 2026-07-16 fix) on the FFT_CHANNEL
-    # spectrum, with the user's per-wn q_guess/search_window/fit_window. fft_q is always
-    # peaks[-1]/2 (the last/largest-q peak = "2q" physically, /2-corrected) -- see
-    # FFT_PARAMS note above for why the 900/911 "first peak = q directly" candidate was
-    # dropped rather than plotted.
+    # envsetting/snippet/dispersion_fitting.py 2026-07-16 fix) on all 3 channels
+    # (amp/phase/complex, all computed in this one call), with the user's per-wn
+    # q_guess/search_window/fit_window. fft_q_{channel} is always peaks[-1]/2 (the
+    # last/largest-q peak = "2q" physically, /2-corrected) -- see FFT_PARAMS note above
+    # for why the 900/911 "first peak = q directly" candidate was dropped rather than
+    # plotted.
     fp = FFT_PARAMS[wn]
     df_target = loaded['df_target']
     amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
@@ -114,11 +122,13 @@ for wn, p in WN_PARAMS.items():
         df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn_str,
         xr=fp['xr'], q_range=(0, 10), window='hann', pad_factor=3.0, peak_method='lorentzian',
         q_guess=fp['q_guess'], search_window=fp['search_window'], fit_window=fp['fit_window'], plot=False)
-    fft_pk = fft_out[f'peaks_{FFT_CHANNEL}']['peaks']
-    fft_fw = fft_out[f'peaks_{FFT_CHANNEL}']['fwhm']
 
-    fft_q = fft_pk[-1] / 10.0 / 2 if fft_pk[-1] is not None else np.nan
-    fft_q_fwhm = fft_fw[-1] / 10.0 / 2 if fft_fw[-1] is not None else np.nan
+    fft_q_by_channel = {}
+    fft_q_fwhm_by_channel = {}
+    for ch in FFT_CHANNELS:
+        pk, fw = fft_out[f'peaks_{ch}']['peaks'], fft_out[f'peaks_{ch}']['fwhm']
+        fft_q_by_channel[ch] = pk[-1] / 10.0 / 2 if pk[-1] is not None else np.nan
+        fft_q_fwhm_by_channel[ch] = fw[-1] / 10.0 / 2 if fw[-1] is not None else np.nan
 
     amplp = pd.DataFrame({'distance_um': x_f, f'{wn_str}_O3A': sig_f})
     outs, fig_rs, _ = nanof.compare_cavity_models(
@@ -185,12 +195,15 @@ for wn, p in WN_PARAMS.items():
         interval_23 = q_23 = np.nan
     q_avg12_23 = np.nan  # dropped per user request -- peak2-peak3 alone is the reliable pair
 
-    rows.append(dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q,
-                      fft_q=fft_q, fft_q_fwhm=fft_q_fwhm,
-                      n_peaks=len(peaks_idx), interval_23_um_fit=interval_23, q_peak23_fit=q_23))
+    row = dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q,
+               n_peaks=len(peaks_idx), interval_23_um_fit=interval_23, q_peak23_fit=q_23)
+    for ch in FFT_CHANNELS:
+        row[f'fft_q_{ch}'] = fft_q_by_channel[ch]
+        row[f'fft_q_{ch}_fwhm'] = fft_q_fwhm_by_channel[ch]
+    rows.append(row)
+    fft_str = '  '.join(f'FFT({ch})={fft_q_by_channel[ch]:.3f}+-{fft_q_fwhm_by_channel[ch]/2:.3f}' for ch in FFT_CHANNELS)
     print(f'{wn}cm-1: CHT={cht_q:.3f}  Hankel={hankel_q:.3f}  sqrtx={sqrtx_q:.3f}  '
-          f'FFT({FFT_CHANNEL})={fft_q:.3f}+-{fft_q_fwhm/2:.3f}  '
-          f'q(peak2-3, subpixel fit)={q_23:.3f}')
+          f'{fft_str}  q(peak2-3, subpixel fit)={q_23:.3f}')
 
 df = pd.DataFrame(rows).sort_values('wn', ascending=False)
 
