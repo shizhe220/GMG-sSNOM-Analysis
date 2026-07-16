@@ -692,3 +692,52 @@ Read it deliberately when historical context is needed.
 - Regenerated all 9 E_F panels (0.60, 0.65-0.77 in 0.02 steps, 0.771) with the updated
   5-source overlay (hankel/sqrtx/peak-spacing/fft-peak0/fft-peak1÷2) + error bars, same
   `graphene_4x1_manual_lp1_peak_spacing_crosscheck_v1/` folder, for the user to compare.
+
+## 2026-07-16 Physics-based fft peak labeling; rp plot moved into rp_dispersion_plot.ipynb
+
+- **User correction on the previous entry's `fft_q`/`fft_q_peak2_div2` split**: labeling
+  must be based on physics (which peak actually IS "2q"), not on peak index. For
+  860/870/880/890 (single `q_guess`) that one peak IS 2q. For 900/911 (two `q_guess`,
+  `[q,2q]` order) the **second/larger** peak is still 2q -- same physical channel as
+  every other wn, just now resolved alongside a smaller companion peak. Given the prior
+  entry's own finding that `peak1/2` tracked the ridge far better than `peak0` direct at
+  900/911, the user instructed to drop the `peak0`-direct hypothesis output entirely and
+  use only `peaks[-1]/2` (last/largest fitted peak, works for both 1- and 2-peak wn)
+  uniformly across all 6 wn. Also requested a shorter fft legend label, and to fix the
+  FFT channel to `amp` (of the 3 `plot_channel_fft` panels: amp/phase/complex) rather
+  than `complex` used previously -- `FFT_CHANNEL = 'amp'` added as an explicit constant.
+- **`scripts/peak_spacing_crosscheck_graphene_4x1_lp1.py`**: simplified the FFT
+  extraction to `fft_q = fft_pk[-1]/10.0/2`, `fft_q_fwhm = fft_fw[-1]/10.0/2` (µm⁻¹ ->
+  1e5 cm⁻¹ -> /2 for the q/2q convention); removed the `fft_q_peak2_div2`/
+  `fft_q_peak2_div2_fwhm` columns and the now-unneeded peak-index bookkeeping. Result:
+  well-behaved for all 6 wn, FWHM error bars 0.23-0.36 (1e5 cm⁻¹) throughout -- no more
+  900cm-1's unconstrained peak0 (FWHM was 1.2) or 911cm-1's undershoot.
+  860/870/880/890/900/911cm-1 fft_q = 0.963/1.108/1.173/1.253/1.339/1.449.
+- **Moved the rp-plotting/E_F-scan code out of the script and into
+  `rp_dispersion_plot.ipynb` (new section 8)**, per user request, so source
+  selection/E_F range/error-bar details can be tweaked interactively without re-running
+  the slow per-wn CHT/Hankel/sqrtx/peak-spacing/FFT fits. The script now only produces
+  `peak_spacing_crosscheck.csv` + the real-space Lorentzian-fit preview PNG; section 8
+  loads that CSV and reuses the notebook's own `MoO3_a`/`materials_4x1_a`/`stack_4x1`/
+  `SUBS`/`GAMMA`/`build_tm_layers`/`fit_Ef` (already defined in section 3, cell
+  `ec8b2e28`) rather than duplicating them.
+- **Bug caught during this move (self-check, not shipped broken)**: `fit_Ef`'s `q_data`
+  arg expects raw cm⁻¹ (matching `q(cm-1) = q_1e5*1e5`, the convention `build_pts()`/
+  `fit_all_methods()` use earlier in the notebook), but the CSV's columns are in this
+  project's usual 1e5 cm⁻¹ units. First execution passed them straight through --
+  every source's fitted E_F silently saturated at `ef_bounds`'s upper edge (1.500eV,
+  suspiciously round). Fixed by multiplying by `1e5` before the `fit_Ef` call; re-ran,
+  all 4 sources now converge sensibly: hankel=0.695eV, sqrtx=0.700eV,
+  peak3-peak2/2=0.688eV, fft(amp,2q/2)=0.695eV -- tight 0.688-0.700eV cluster, matching
+  the pre-open-question 2026-07-16 result above (unsurprising, since the fft column now
+  uses the same "always the 2q peak" convention as before the two-hypothesis detour).
+- Regenerated all 9 E_F panels (0.60, 0.65-0.77 step 0.02, 0.771) with the 4-source
+  overlay (hankel/sqrtx/peak-spacing/fft), same `graphene_4x1_manual_lp1_peak_spacing_
+  crosscheck_v1/` folder -- visually verified (0.69eV panel) all 4 sources track the
+  ridge cleanly at every wn including 900/911, no more mismatch there.
+- **Still explicitly open, not resolved**: whether the smaller/first FFT peak at
+  900/911cm-1 genuinely represents an independent "q" (edge-launched) signal distinct
+  from "2q" remains unanswered -- this round's simplification means that value isn't
+  even computed anymore (only `peaks[-1]` is used). Revisit by re-adding a
+  `peaks[0]`-based column if/when the user wants to pursue this again, ideally with more
+  wn past 911cm-1 where the two peaks may separate further.
