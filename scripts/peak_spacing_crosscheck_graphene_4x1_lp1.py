@@ -64,19 +64,28 @@ WN_PARAMS = {
               xr_range_rs=(0.32, 1.5), lam0_guess_um=0.40),
 }
 
-# FFT xr/q_guess, re-read live from the notebook on 2026-07-16 -- NOTE these are
-# mid-tuning and inconsistent right now: 860/870/880 have a single q_guess (~2, i.e.
-# guessing "2q" directly per the q/2q finding), 890 similarly (2.5), but 900/911 still
-# have the older two-value [q_guess1, q_guess2] ("q, not 2q" convention). fft_q below is
-# computed AS-IS from whatever's live -- NOT /2-corrected, since the guess convention
-# isn't uniform yet. Treat the fft points on the plot with that caveat in mind.
+# FFT xr/q_guess/search_window/fit_window, re-read live from the notebook on 2026-07-16
+# (user finished retuning all 6 wn with peak_method='lorentzian' + the new fit_window
+# param, see envsetting/snippet/dispersion_fitting.py 2026-07-16 log entry).
+#
+# OPEN QUESTION, not resolved -- record only, do not "fix" without discussing further:
+# 860/870/880/890 have a single q_guess (targeting "2q" directly, since at these wn the
+# FFT is 2q-dominated and there's no separately-resolvable "q" peak) -- for these,
+# fft_q = peaks[0]/2 (the /2-correction established earlier this session). But 900/911
+# now have TWO q_guess entries, because the edge-launched "q" peak has started to
+# separately resolve from the 2q peak by this wn -- for these, peak[0] (smaller q_guess,
+# ~1.2-1.6) is claimed to correspond to "q" directly (no /2 needed), while peak[1]
+# (~2.2-3.0) is presumably still "2q" (would need /2). Which of these two candidates
+# (peak0 direct, or peak1/2) is the more reliable "q" estimate at 900/911 is NOT yet
+# known -- both are computed and plotted below (fft_q = peak0 direct; fft_q_peak2_div2 =
+# peak1/2, only populated for 900/911) so they can be visually compared.
 FFT_PARAMS = {
-    860: dict(xr=(0.31, 1.2), q_guess=[2]),
-    870: dict(xr=(0.36, 1.5), q_guess=[2]),
-    880: dict(xr=(0.34, 1.5), q_guess=[2]),
-    890: dict(xr=(0.32, 1.5), q_guess=[2.5]),
-    900: dict(xr=(0.33, 1.5), q_guess=[1.2, 2.2]),
-    911: dict(xr=(0.32, 1.5), q_guess=[1.6, 3.0]),
+    860: dict(xr=(0.31, 1.2), q_guess=[1.8], search_window=0.2, fit_window=0.5),
+    870: dict(xr=(0.36, 1.5), q_guess=[2],   search_window=0.3, fit_window=0.3),
+    880: dict(xr=(0.34, 1.5), q_guess=[2],   search_window=0.3, fit_window=0.3),
+    890: dict(xr=(0.32, 1.5), q_guess=[2.5], search_window=0.3, fit_window=0.3),
+    900: dict(xr=(0.33, 1.5), q_guess=[1.2, 2.2], search_window=0.3, fit_window=1.0),
+    911: dict(xr=(0.32, 1.5), q_guess=[1.6, 3.0], search_window=0.3, fit_window=1.0),
 }
 
 rows = []
@@ -91,9 +100,11 @@ for wn, p in WN_PARAMS.items():
     plt.close(fig_cht)
     cht_q = cht_results['q_p_1e5cm_1']
 
-    # FFT: same complex-FFT spectrum + windowed-peak-search convention as
-    # nanoftir_Shizhe.run_wn_comparison uses for the pkl's official "fft" q_p (nearest
-    # q_guess[0]) -- current live xr/q_guess from the notebook, see FFT_PARAMS note above.
+    # FFT: complex-FFT spectrum, Lorentzian peak fit (peak_method='lorentzian' +
+    # fit_window, see envsetting/snippet/dispersion_fitting.py 2026-07-16 fix) with the
+    # user's freshly-retuned per-wn q_guess/search_window/fit_window. See the FFT_PARAMS
+    # "OPEN QUESTION" note above for the single-peak (2q, /2-corrected) vs two-peak
+    # (peak0=q direct, peak1=2q also /2-corrected as a cross-check) extraction logic.
     fp = FFT_PARAMS[wn]
     df_target = loaded['df_target']
     amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
@@ -101,10 +112,23 @@ for wn, p in WN_PARAMS.items():
     amp_osc = amp_raw - savgol_filter(amp_raw, window_length=wlen, polyorder=2)
     fft_out = nanof.plot_channel_fft(
         df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn_str,
-        xr=fp['xr'], q_range=(0, 10), window='hann', pad_factor=3.0,
-        q_guess=fp['q_guess'], plot=False)
-    fft_peaks = [pk for pk in fft_out['peaks_complex']['peaks'] if pk is not None]
-    fft_q = fft_peaks[0] / 10.0 if fft_peaks else np.nan  # um^-1 -> 1e5 cm^-1
+        xr=fp['xr'], q_range=(0, 10), window='hann', pad_factor=3.0, peak_method='lorentzian',
+        q_guess=fp['q_guess'], search_window=fp['search_window'], fit_window=fp['fit_window'], plot=False)
+    fft_pk = fft_out['peaks_complex']['peaks']
+    fft_fw = fft_out['peaks_complex']['fwhm']
+
+    fft_q_peak2_div2 = fft_q_peak2_div2_fwhm = np.nan
+    if len(fp['q_guess']) == 1:
+        # single peak = "2q" -> /2 to get q, per the earlier session-wide finding
+        fft_q = fft_pk[0] / 10.0 / 2 if fft_pk[0] is not None else np.nan
+        fft_q_fwhm = fft_fw[0] / 10.0 / 2 if fft_fw[0] is not None else np.nan
+    else:
+        # two peaks: peak0 claimed = "q" directly (no /2); peak1 = "2q" cross-check, /2'd
+        fft_q = fft_pk[0] / 10.0 if fft_pk[0] is not None else np.nan
+        fft_q_fwhm = fft_fw[0] / 10.0 if fft_fw[0] is not None else np.nan
+        if len(fft_pk) > 1 and fft_pk[1] is not None:
+            fft_q_peak2_div2 = fft_pk[1] / 10.0 / 2
+            fft_q_peak2_div2_fwhm = fft_fw[1] / 10.0 / 2
 
     amplp = pd.DataFrame({'distance_um': x_f, f'{wn_str}_O3A': sig_f})
     outs, fig_rs, _ = nanof.compare_cavity_models(
@@ -171,10 +195,13 @@ for wn, p in WN_PARAMS.items():
         interval_23 = q_23 = np.nan
     q_avg12_23 = np.nan  # dropped per user request -- peak2-peak3 alone is the reliable pair
 
-    rows.append(dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q, fft_q=fft_q,
+    rows.append(dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q,
+                      fft_q=fft_q, fft_q_fwhm=fft_q_fwhm,
+                      fft_q_peak2_div2=fft_q_peak2_div2, fft_q_peak2_div2_fwhm=fft_q_peak2_div2_fwhm,
                       n_peaks=len(peaks_idx), interval_23_um_fit=interval_23, q_peak23_fit=q_23))
-    print(f'{wn}cm-1: CHT={cht_q:.3f}  Hankel={hankel_q:.3f}  sqrtx={sqrtx_q:.3f}  FFT={fft_q:.3f}  '
-          f'n_peaks={len(peaks_idx)}  q(peak2-3, subpixel fit)={q_23:.3f}')
+    print(f'{wn}cm-1: CHT={cht_q:.3f}  Hankel={hankel_q:.3f}  sqrtx={sqrtx_q:.3f}  '
+          f'FFT={fft_q:.3f}+-{fft_q_fwhm/2:.3f}  FFT_peak2/2={fft_q_peak2_div2:.3f}  '
+          f'q(peak2-3, subpixel fit)={q_23:.3f}')
 
 df = pd.DataFrame(rows).sort_values('wn', ascending=False)
 
@@ -201,9 +228,16 @@ stack_4x1 = [('MoO3', 4.2), 'graphene', ('SiO2', 300)]
 FREQS = np.linspace(850, 920, 300)
 QS = np.linspace(1e4, 3.5e5, 400)
 
-sources = [('hankel', 'hankel_q', '#1c7293', 's'), ('sqrtx', 'sqrtx_q', '#e08214', '^'),
-           ('peak3-peak2 / 2 (subpixel fit)', 'q_peak23_fit_div2', '#4daf4a', 'D'),
-           ('fft (live q_guess, NOT /2-corrected -- see FFT_PARAMS note)', 'fft_q', '#762a83', 'v')]
+# 5th tuple element = FWHM column for an x-direction error bar (None = no error bar).
+# fft_q's error bar is FWHM/2 (standard "linewidth as uncertainty" convention). The
+# fft_q_peak2_div2 source (900/911 only, all-NaN elsewhere so it silently drops out of
+# the other 4 wn) is the OPEN QUESTION cross-check -- see FFT_PARAMS note above.
+sources = [('hankel', 'hankel_q', '#1c7293', 's', None),
+           ('sqrtx', 'sqrtx_q', '#e08214', '^', None),
+           ('peak3-peak2 / 2 (subpixel fit)', 'q_peak23_fit_div2', '#4daf4a', 'D', None),
+           ('fft (Lorentzian, peak0)', 'fft_q', '#762a83', 'v', 'fft_q_fwhm'),
+           ('fft (Lorentzian, peak1/2 -- 900/911 only, cross-check)', 'fft_q_peak2_div2', '#d95f02', 'X',
+            'fft_q_peak2_div2_fwhm')]
 
 # ---- Which doping level is actually correct: fit E_F per source (6 points each) ----
 # Same "maximize sum of Im(r_p) at the (w,q) data points" recipe as rp_dispersion_plot.ipynb
@@ -226,8 +260,11 @@ def fit_Ef(w_data, q_data_1e5, gamma=GAMMA, ef_bounds=(0.1, 1.5)):
 
 fitted_ef = {}
 print('\nFitted E_F per source (6 pts, wn=860-911cm-1):')
-for label, col, color, marker in sources:
+for label, col, color, marker, err_col in sources:
     pts_df = df[['wn', col]].dropna()
+    if len(pts_df) < 3:
+        print(f'  {label:>20s}: skipped E_F fit -- only {len(pts_df)} pts (too few to fit meaningfully)')
+        continue
     ef_fit = fit_Ef(pts_df['wn'].values, pts_df[col].values)
     fitted_ef[label] = ef_fit
     print(f'  {label:>20s}: E_F = {ef_fit:.3f} eV')
@@ -251,14 +288,17 @@ for ef_label, EF_REF in ef_scan:
     fig, ax = plt.subplots(figsize=(7, 6))
     rp_schematic(stack_4x1, materials_4x1, subs=SUBS, freqs=FREQS, qs=QS,
                  Ef=EF_REF, gamma=GAMMA, figAx=(fig, ax), vmin=0, vmax=8, show_Ef=True, ytickspacing=10)
-    for label, col, color, marker in sources:
-        pts_df = df[['wn', col]].dropna()
+    for label, col, color, marker, err_col in sources:
+        cols = ['wn', col] + ([err_col] if err_col else [])
+        pts_df = df[cols].dropna(subset=['wn', col])
         if len(pts_df):
-            # QS/the rp_schematic axes are in raw cm^-1 -- col values are in 1e5 cm^-1, convert
-            ax.plot(pts_df[col].values * 1e5, pts_df['wn'].values, marker, color=color, ms=8,
-                    mec='white', mew=1, ls='none', label=label, zorder=6)
+            # QS/the rp_schematic axes are in raw cm^-1 -- col/fwhm values are in 1e5 cm^-1, convert
+            xerr = (pts_df[err_col].values * 1e5 / 2) if err_col else None  # FWHM/2 as the error bar
+            ax.errorbar(pts_df[col].values * 1e5, pts_df['wn'].values, xerr=xerr, marker=marker,
+                        color=color, ms=8, mec='white', mew=1, ls='none', capsize=3, elinewidth=1.3,
+                        label=label, zorder=6)
     ax.set_title(f'{DATASET} {LP} (edge), MoO3(a), E_F={EF_REF}eV (fixed ref), gamma={GAMMA}cm-1\n'
-                 f'wn=860-911cm-1 (peak-spacing /2-corrected; fft NOT /2-corrected, mid-tuning)', fontsize=10.5)
+                 f'wn=860-911cm-1 (fft peak0: /2 for single-peak wn, direct for 900/911 -- open Q)', fontsize=10.5)
     ax.legend(frameon=False, fontsize=9, loc='upper left')
     fig.tight_layout()
     out_path = f'{SAVE_DIR}/rp_peak_spacing_crosscheck_860to911_Ef{ef_label}.png'

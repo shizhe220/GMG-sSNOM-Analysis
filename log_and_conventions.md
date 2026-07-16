@@ -658,3 +658,37 @@ Read it deliberately when historical context is needed.
 - Logged the shared-module change in `envsetting/PROJECTS.md`'s cross-project "Known
   issues" section too, per that file's own convention (future sessions in other projects
   read that file, not this one, to learn about shared-module changes).
+
+## 2026-07-16 fft added to the peak-spacing rp plot with FWHM error bars; open q/2q question at 900/911cm-1
+
+- User finished retuning FFT for all 6 wn (860-911cm-1) using `peak_method='lorentzian'`
+  + the new `fit_window` param: 860/870/880/890 keep a single `q_guess` (targeting "2q"
+  directly, consistent with the low-wn 2q-dominance finding), but **900/911 now use two
+  `q_guess` entries** (`[1.2,2.2]` and `[1.6,3.0]`) since the edge-launched "q" peak has
+  started to resolve as its own separate feature in the FFT spectrum by this wn.
+- Updated `scripts/peak_spacing_crosscheck_graphene_4x1_lp1.py`: `fft_q` now computed
+  with `peak_method='lorentzian'` + each wn's live `search_window`/`fit_window`;
+  single-`q_guess` wn get `fft_q = peak0/2` (unchanged "2q" convention); two-`q_guess` wn
+  (900/911) get `fft_q = peak0` directly (per the user's hypothesis that peak0 now IS
+  "q") **plus** a separate cross-check column `fft_q_peak2_div2 = peak1/2` (still
+  treating the larger peak as "2q"), both plotted with FWHM/2 as an x-direction error bar.
+- **OPEN QUESTION, not resolved -- do not silently "fix" without re-discussing**: visually
+  and numerically, at both 900cm-1 and 911cm-1 the **`peak1/2` cross-check tracks the
+  ridge/hankel/sqrtx/peak-spacing far better than `peak0` direct**. 911cm-1: peak0 sits
+  notably left of the ridge (q~0.83) while peak1/2 lands almost exactly on it, matching
+  hankel/sqrtx/peak-spacing closely. 900cm-1: peak0's fit is essentially unconstrained
+  (FWHM=1.2, i.e. the error bar spans roughly q=0.5 to 2.0 -- not a meaningful
+  measurement), while peak1/2 sits right on the ridge. **This contradicts the working
+  hypothesis that peak0 directly gives "q" at these wn** -- more likely peak0 isn't yet
+  cleanly/independently resolved from the 2q feature at 900/911, and the old
+  "larger-peak-is-2q, /2 it" convention may still be the more reliable one even here.
+  Needs more wn (920+) and/or a cleaner q_guess/fit_window retune at 900/911 before
+  drawing a real conclusion.
+- Fitted E_F, all sources: hankel=0.695eV, sqrtx=0.700eV, peak3-peak2/2=0.688eV, fft
+  (peak0)=0.695eV -- fft(peak1/2) skipped (only 2 non-NaN points, 900/911, too few to fit
+  meaningfully on its own). The fft(peak0) E_F matching hankel so closely is partly
+  fortuitous given the open question above -- 900cm-1's huge uncertainty and 911cm-1's
+  undershoot may be averaging out in the fit rather than genuinely agreeing.
+- Regenerated all 9 E_F panels (0.60, 0.65-0.77 in 0.02 steps, 0.771) with the updated
+  5-source overlay (hankel/sqrtx/peak-spacing/fft-peak0/fft-peak1÷2) + error bars, same
+  `graphene_4x1_manual_lp1_peak_spacing_crosscheck_v1/` folder, for the user to compare.

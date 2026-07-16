@@ -2,4 +2,4 @@ source,fitted_Ef_eV
 hankel,0.6947
 sqrtx,0.6999
 peak3-peak2 / 2 (subpixel fit),0.6885
-fft (live q_guess, NOT /2-corrected -- see FFT_PARAMS note),1.0685
+fft (Lorentzian, peak0),0.6945
