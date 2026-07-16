@@ -27,7 +27,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from scipy.optimize import minimize_scalar, curve_fit
 import nanoftir_Shizhe as nanof
 from snippet.nearfield import rp_schematic
@@ -64,6 +64,21 @@ WN_PARAMS = {
               xr_range_rs=(0.32, 1.5), lam0_guess_um=0.40),
 }
 
+# FFT xr/q_guess, re-read live from the notebook on 2026-07-16 -- NOTE these are
+# mid-tuning and inconsistent right now: 860/870/880 have a single q_guess (~2, i.e.
+# guessing "2q" directly per the q/2q finding), 890 similarly (2.5), but 900/911 still
+# have the older two-value [q_guess1, q_guess2] ("q, not 2q" convention). fft_q below is
+# computed AS-IS from whatever's live -- NOT /2-corrected, since the guess convention
+# isn't uniform yet. Treat the fft points on the plot with that caveat in mind.
+FFT_PARAMS = {
+    860: dict(xr=(0.31, 1.2), q_guess=[2]),
+    870: dict(xr=(0.36, 1.5), q_guess=[2]),
+    880: dict(xr=(0.34, 1.5), q_guess=[2]),
+    890: dict(xr=(0.32, 1.5), q_guess=[2.5]),
+    900: dict(xr=(0.33, 1.5), q_guess=[1.2, 2.2]),
+    911: dict(xr=(0.32, 1.5), q_guess=[1.6, 3.0]),
+}
+
 rows = []
 for wn, p in WN_PARAMS.items():
     wn_str = f'{wn}cm-1'
@@ -75,6 +90,21 @@ for wn, p in WN_PARAMS.items():
         k_fit_range_cm=p['k_fit_range_cm'], k_linked_guess_cm=p['k_linked_guess_cm'])
     plt.close(fig_cht)
     cht_q = cht_results['q_p_1e5cm_1']
+
+    # FFT: same complex-FFT spectrum + windowed-peak-search convention as
+    # nanoftir_Shizhe.run_wn_comparison uses for the pkl's official "fft" q_p (nearest
+    # q_guess[0]) -- current live xr/q_guess from the notebook, see FFT_PARAMS note above.
+    fp = FFT_PARAMS[wn]
+    df_target = loaded['df_target']
+    amp_raw, phase_raw = df_target['O3A'], df_target['O3P']
+    wlen = min(41, len(amp_raw) if len(amp_raw) % 2 != 0 else len(amp_raw) - 1)
+    amp_osc = amp_raw - savgol_filter(amp_raw, window_length=wlen, polyorder=2)
+    fft_out = nanof.plot_channel_fft(
+        df_target['distance_um'], amp_osc, phase_raw, label='O3', wn=wn_str,
+        xr=fp['xr'], q_range=(0, 10), window='hann', pad_factor=3.0,
+        q_guess=fp['q_guess'], plot=False)
+    fft_peaks = [pk for pk in fft_out['peaks_complex']['peaks'] if pk is not None]
+    fft_q = fft_peaks[0] / 10.0 if fft_peaks else np.nan  # um^-1 -> 1e5 cm^-1
 
     amplp = pd.DataFrame({'distance_um': x_f, f'{wn_str}_O3A': sig_f})
     outs, fig_rs, _ = nanof.compare_cavity_models(
@@ -141,9 +171,9 @@ for wn, p in WN_PARAMS.items():
         interval_23 = q_23 = np.nan
     q_avg12_23 = np.nan  # dropped per user request -- peak2-peak3 alone is the reliable pair
 
-    rows.append(dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q,
+    rows.append(dict(wn=wn, cht_q=cht_q, hankel_q=hankel_q, sqrtx_q=sqrtx_q, fft_q=fft_q,
                       n_peaks=len(peaks_idx), interval_23_um_fit=interval_23, q_peak23_fit=q_23))
-    print(f'{wn}cm-1: CHT={cht_q:.3f}  Hankel={hankel_q:.3f}  sqrtx={sqrtx_q:.3f}  '
+    print(f'{wn}cm-1: CHT={cht_q:.3f}  Hankel={hankel_q:.3f}  sqrtx={sqrtx_q:.3f}  FFT={fft_q:.3f}  '
           f'n_peaks={len(peaks_idx)}  q(peak2-3, subpixel fit)={q_23:.3f}')
 
 df = pd.DataFrame(rows).sort_values('wn', ascending=False)
@@ -172,7 +202,8 @@ FREQS = np.linspace(850, 920, 300)
 QS = np.linspace(1e4, 3.5e5, 400)
 
 sources = [('hankel', 'hankel_q', '#1c7293', 's'), ('sqrtx', 'sqrtx_q', '#e08214', '^'),
-           ('peak3-peak2 / 2 (subpixel fit)', 'q_peak23_fit_div2', '#4daf4a', 'D')]
+           ('peak3-peak2 / 2 (subpixel fit)', 'q_peak23_fit_div2', '#4daf4a', 'D'),
+           ('fft (live q_guess, NOT /2-corrected -- see FFT_PARAMS note)', 'fft_q', '#762a83', 'v')]
 
 # ---- Which doping level is actually correct: fit E_F per source (6 points each) ----
 # Same "maximize sum of Im(r_p) at the (w,q) data points" recipe as rp_dispersion_plot.ipynb
@@ -207,14 +238,16 @@ with open(f'{SAVE_DIR}/fitted_ef_per_source.csv', 'w') as f:
     for label, ef_fit in fitted_ef.items():
         f.write(f'{label},{ef_fit:.4f}\n')
 
-# 0.65eV = Raman-measured value for this dataset (graphene_4x1 lp1 = "edge");
-# 0.60eV = lower end of the Raman-quoted range; 0.67eV = user-requested extra check point;
-# 0.771eV = the previously-used full-15-wn CHT/MoO3(a) fit value -- one panel each, same
-# 4 sources, for direct visual comparison. Fitted per-source E_F values (above) are the
-# actual answer to "which doping level is correct"; these fixed-E_F panels are a
+# Fine-grained scan 0.65->0.77eV in 0.02eV steps (7 panels) -- user asked for "0.65 to
+# 0.77 every 0.2" but that step doesn't fit inside a 0.12eV-wide range, interpreted as a
+# typo for 0.02eV. 0.60eV (Raman lower bound) and 0.771eV (previous full-15-wn CHT fit)
+# kept too, for reference against the earlier panels. Fitted per-source E_F values (above)
+# are the actual answer to "which doping level is correct"; these fixed-E_F panels are a
 # complementary visual (same 4 points, ridge redrawn at each candidate E_F).
-for ef_label, EF_REF in [('0.65eV_raman', 0.65), ('0.60eV_raman_lower', 0.60),
-                          ('0.67eV', 0.67), ('0.771eV_cht_fit', 0.771)]:
+ef_scan = [('0.60eV_raman_lower', 0.60)] + \
+    [(f'{ef:.2f}eV', ef) for ef in np.round(np.arange(0.65, 0.77 + 1e-9, 0.02), 2)] + \
+    [('0.771eV_cht_fit', 0.771)]
+for ef_label, EF_REF in ef_scan:
     fig, ax = plt.subplots(figsize=(7, 6))
     rp_schematic(stack_4x1, materials_4x1, subs=SUBS, freqs=FREQS, qs=QS,
                  Ef=EF_REF, gamma=GAMMA, figAx=(fig, ax), vmin=0, vmax=8, show_Ef=True, ytickspacing=10)
@@ -225,7 +258,7 @@ for ef_label, EF_REF in [('0.65eV_raman', 0.65), ('0.60eV_raman_lower', 0.60),
             ax.plot(pts_df[col].values * 1e5, pts_df['wn'].values, marker, color=color, ms=8,
                     mec='white', mew=1, ls='none', label=label, zorder=6)
     ax.set_title(f'{DATASET} {LP} (edge), MoO3(a), E_F={EF_REF}eV (fixed ref), gamma={GAMMA}cm-1\n'
-                 f'wn=860-911cm-1 peak-spacing cross-check (peak-spacing sources /2-corrected)', fontsize=11)
+                 f'wn=860-911cm-1 (peak-spacing /2-corrected; fft NOT /2-corrected, mid-tuning)', fontsize=10.5)
     ax.legend(frameon=False, fontsize=9, loc='upper left')
     fig.tight_layout()
     out_path = f'{SAVE_DIR}/rp_peak_spacing_crosscheck_860to911_Ef{ef_label}.png'

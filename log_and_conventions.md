@@ -602,3 +602,59 @@ Read it deliberately when historical context is needed.
   single-peak shape (broad/plateau-like region, x0 shifted further from the raw grid max
   than any other wn/peak) -- consistent with the low-SNR + possible q/2q beating explanation
   already logged, not a new issue.
+
+## 2026-07-16 Added fft to the peak-spacing cross-check plot; extended E_F scan
+
+- User had independently (between sessions, uncommitted) started re-tuning FFT
+  `q_guess` in `fitting_pipeline_graphene_4x1_lp1.ipynb` for wn 860/870/880/890 --
+  changed to a **single** value (~2, or 2.5 for 890) instead of the old `[q1, q2]` pair,
+  apparently now guessing "2q" directly per the q/2q finding; 900/911 still have the old
+  two-value guess. Added `fft_q` to `peak_spacing_crosscheck_graphene_4x1_lp1.py` (same
+  complex-FFT + windowed-nearest-`q_guess[0]` convention as the pkl's official `fft`
+  method), read live from the notebook, explicitly labeled "NOT /2-corrected" since the
+  guess convention isn't uniform across these 6 wn right now.
+- **Confirms the mixed-tuning state visually**: on the rp plot, fft points for
+  860/870/880/890 (single q_guess~2) sit far right of the ridge (q~1.9-2.5, i.e. tracking
+  "2q" as expected), while 900/911 (still `[q1,q2]`) sit close to the ridge near
+  hankel/sqrtx (tracking "q"). Fitted E_F from fft alone: 1.069eV -- far off
+  hankel/sqrtx/peak-spacing's 0.688-0.700eV, as expected given the inconsistency. Not
+  meaningful as a data point until the user finishes retuning all 6 wn to one convention.
+- Extended the E_F panel scan from the previous 4 fixed values to a **0.65-0.77eV sweep
+  in 0.02eV steps** (7 panels) + kept 0.60eV (Raman lower bound) and 0.771eV (previous
+  full-15-wn fit) for reference -- 9 panels total, same folder.
+- **Taught user how to use `plot_channel_fft`'s built-in `peak_method='lorentzian'`**
+  option (fits a multi-Lorentzian to the k-space FFT spectrum directly, rather than
+  windowed-nearest-peak search) as a more principled alternative -- gives FWHM per peak
+  (`fft_out['peaks_complex']['fwhm']`) usable as an error bar. User will retune q_guess
+  for all 6 wn using this before the next round.
+- **User tried it on 860cm-1** (`q_guess=[1.8]`, `search_window=0.02`, `peak_method='lorentzian'`)
+  and the fit looked poor (q=1.76 with FWHM=2.05-3.14 across the 3 panels). Diagnosed two
+  compounding causes: (1) `search_window=0.02` bounds x0 to [1.764,1.836] -- the fitted
+  q=17.64 (um^-1 internal) landed EXACTLY on that lower bound, i.e. clamped, not converged;
+  loosening to >=0.1 gives a stable interior solution q=1.652 (1e5cm-1), ~7% different from
+  the guess. (2) Deeper issue: `fit_peaks`'s Lorentzian `curve_fit` was fed the ENTIRE
+  spectrum (confirmed: 86 points spanning 2.35-201.86 um^-1 for this call) regardless of
+  `search_window` -- only x0 was bounded, gamma/FWHM had nothing stopping it from being
+  pulled broad by far-field background/other bumps. This is a structural issue in the
+  shared function, not just this dataset/call.
+- **Fixed in `snippet/dispersion_fitting.py`** (`plot_channel_fft`/inner `fit_peaks`):
+  added a new optional `fit_window` parameter (default `None` = unchanged old behavior,
+  verified byte-identical to pre-change output for the no-fit_window case). When given
+  (single float applied to every peak, or a list matching `len(q_guess)` for per-peak
+  custom width), restricts the q-range of data points actually fed into `curve_fit` to
+  the union of each peak's `[q_guess*(1-fw), q_guess*(1+fw)]` window, separate from
+  `search_window` (which only bounds x0, not the fit data). Checked
+  `envsetting/PROJECTS.md` first -- only GMG currently imports this module (CrSBr_Analysis/
+  G-CIPS still on their own older un-migrated forks), and the new param is purely additive
+  or so this is low-risk; also grepped all GMG call sites, none touch `fit_window`, so
+  behavior is unchanged unless a caller opts in explicitly.
+- **Result for 860cm-1**: `fit_window=0.5` gives the tightest, most self-consistent result
+  across all 3 FFT panels (amp/phase/complex q=1.93/1.97/1.92, FWHM=1.43/1.61/1.48) --
+  much better agreement than the unwindowed fit (where phase disagreed badly, q=1.26 vs
+  amp/complex ~1.65-1.71) or `fit_window=1.0` (reverts toward the broad/inconsistent
+  unwindowed behavior: phase back to q=1.26, FWHM up to 2.6-3.6). Recommend starting from
+  `search_window>=0.1` (not 0.02) and `fit_window~0.5` when the user retunes the other wn,
+  but verify per-wn since peak shapes differ.
+- Logged the shared-module change in `envsetting/PROJECTS.md`'s cross-project "Known
+  issues" section too, per that file's own convention (future sessions in other projects
+  read that file, not this one, to learn about shared-module changes).
