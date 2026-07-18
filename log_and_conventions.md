@@ -763,3 +763,99 @@ Read it deliberately when historical context is needed.
   no script re-run needed. Re-executed with the default (`amp`), reproduces the prior
   E_F=0.695eV and all 9 panels unchanged (byte-for-byte content, since `amp` was already
   the value being used).
+
+## 2026-07-17 compare_cavity_models fit-window shading; 860-911cm-1 starting-point sensitivity; FFT amp/complex degeneracy explained; shareable q_p CSV
+
+- **Shading added to `compare_cavity_models`** (`envsetting/snippet/dispersion_fitting.py`,
+  purely additive to the plot, no fit-math change): the real-space Hankel/1-sqrtx
+  comparison plot was the one remaining place without gray shading of the region(s)
+  outside the fit window `xr` when `xlim` is drawn wider than `xr` for context --
+  `fit_and_plot_cht` (k-space) and `plot_channel_fft` (q-space) already had this. Fixed
+  by adding `ax.axvspan`/`axr.axvspan` calls guarded on `xlim[0]<xr[0]`/`xlim[1]>xr[1]`.
+  Verified non-destructive (identical q/lambda printed before/after) and visually
+  confirmed on the live 860cm-1 `fitting_pipeline_graphene_4x1_lp1.ipynb` cell -- the
+  fit's actual starting point (`xr[0]`, previously only inferrable from where the fit
+  curve happened to start) is now directly visible. Re-executed the full notebook
+  headlessly to refresh all saved cell outputs with the new shading (needed
+  `PYTHONPATH=/Users/shizhe/envsetting` -- this notebook, unlike the standalone scripts,
+  doesn't `sys.path.append` it itself, so headless execution needs the env var set
+  explicitly; interactive use is presumably already covered by the user's own kernel
+  config, since none of these cells previously errored for them).
+- **New starting-point sensitivity investigation**
+  (`scripts/startpoint_sensitivity_graphene_4x1_lp1_860to911.py`, replaces an earlier
+  860cm-1-only prototype of the same name that's now deleted/superseded): scans the
+  real-space Hankel/1-sqrtx fit window's lower bound `xr[0]` from 0 to 0.50um in 0.02um
+  steps (right bound fixed at 1.5um) for all 6 wn (860-911cm-1), refitting at each step
+  via `fit_cavity_prefactor_compare` directly (not the full `compare_cavity_models`
+  wrapper, to avoid generating 26x6x2 throwaway figures).
+  - **Bug found and worked around (scan-only, NOT changed in the tuned notebook)**:
+    `fit_cavity_prefactor_compare`'s default `lam_bound_factor=(0.7,1.2)` clamps lambda
+    to +-20-30% of the single fixed `lam0_guess` -- fine when `lam0_guess` was tuned for
+    the actual `xr[0]` being used, but scanning far from that tuned value can genuinely
+    want a lambda outside this narrow window, and the optimizer clamps to the bound edge
+    silently instead of finding a real local minimum. Confirmed via exact-duplicate q
+    values across neighboring start points: 911cm-1 had 11/26 points clamped, 900cm-1
+    had 2/26, 860-890 had 0/26 with the default factor. Widened to `(0.4, 2.0)` for this
+    scan only (passed explicitly per call, `fitting_pipeline_graphene_4x1_lp1.ipynb`
+    untouched) -- clamping dropped to 0/26 for hankel on every wn, 2/26 for sqrtx on
+    880/890 only.
+  - **Result**: q_p vs starting point shows a smooth, non-monotonic oscillation
+    (period ~160-200nm) consistent in shape across all 6 wn (only the absolute q_p level
+    shifts up with wn) -- visualized both as normalized-to-mean overlays and (per user
+    request) as actual/absolute q_p overlays, the latter making the shared oscillation
+    shape vs. wn-dependent absolute level easier to read at a glance.
+  - **RMSE sub-panel added below each q_p-vs-start plot** (same "data panel + quality
+    panel" layout as `compare_cavity_models`): catches genuinely-bad fits (e.g. 880cm-1's
+    RMSE spiking to >1.0 for start<80nm, matching its worst q_p dip) but does NOT catch
+    every bad point -- 911cm-1 sqrtx has an isolated q_p spike at start=280nm (1.744,
+    vs neighbors ~1.3-1.5) whose RMSE (0.076) looks unremarkable next to nearby points,
+    confirming (with a direct data-vs-fit visual check, not just eyeballing RMSE) this is
+    a genuine wrong-local-minimum case that RMSE alone would not flag.
+  - **260-340nm region visually flagged** (by eye, not a fitted/quantitative claim) as
+    where the 6 wn's q_p trends climb together most consistently -- shaded (no legend
+    label, since it's not a quantitative result) on the combined overlay plots and on a
+    new real-space small-multiples preview (`860to911cm-1_realspace_with_good_region.png`)
+    showing where 260-340nm actually falls on each wn's own oscillation: consistently on
+    the falling slope between the first (largest, likely edge/tip-contaminated) peak and
+    the first genuine trough, same shape across all 6 wn.
+  - **sqrtx is visibly less stable than hankel** across the scan (own overlay figure,
+    `..._overlay_sqrtx.png`) -- most notably 911cm-1's wild swing at 150-300nm (down to
+    0.72x mean, up to 1.21x mean) sitting right inside the 260-340nm region that looks
+    clean for hankel, i.e. that region's stability is hankel-specific, not universal.
+  - Outputs: `figures/graphene_4x1_manual/lp1/startingpoint_sensitivity/` -- one
+    `{wn}cm-1_q_vs_start_point.{csv,png}` per wn, `860to911cm-1_q_vs_start_point_overlay_
+    {hankel,sqrtx}.png` (combined, actual q_p + RMSE subpanel), and
+    `860to911cm-1_realspace_with_good_region.png`.
+- **Explained (not a bug) why FFT's amp and complex channels give near-identical
+  peaks/FWHM** for 900/911cm-1 at the currently-tuned `xr` (0.33/0.32um start): the
+  `complex` channel is `amp(x) * exp(i*phase(x))` (`dispersion_fitting.py` lines
+  544-548) -- if `phase(x)` is close to constant over the fit window, this is
+  approximately `amp(x)` times a single fixed complex number, and FFT linearity means
+  multiplying by a constant only rotates the spectrum's phase, never changes its
+  magnitude shape, so `|FFT(complex)| ~ |FFT(amp)|` regardless of what that constant
+  phase value is. Verified numerically: phase std within `xr=(0.32,1.5)`/`(0.33,1.5)` is
+  only 0.025/0.033 rad (near flat) vs 0.14 rad when the window is widened down to the
+  true edge (x=0) -- confirmed by directly comparing full complex FFT (Re/Im, not just
+  magnitude) against the "amp FFT times a constant phase factor" prediction, correlation
+  0.9997/0.9997 in the tuned window vs 0.9966 near the edge. Also confirmed the raw
+  exported linecut CSV *does* include a small pre-edge (x<0) region (19/130 points for
+  911cm-1, down to x=-0.28um) -- it's `load_aligned_wn_signal`'s own `mask_fit = x>=0`
+  that crops it for fitting, not the extraction step itself. No code changed -- this was
+  purely a diagnostic/explanatory investigation (several throwaway comparison figures in
+  `scratchpad/`, not saved into the repo).
+- **New shareable CSV** for an external collaborator's request ("freq(cm-1) first
+  column, then qp(cm-1) per model"): `figures/rp_dispersion/
+  graphene_4x1_manual_lp1_peak_spacing_crosscheck_v1/GMG#3_4x1um_GMGregion_leftedge.csv`
+  (built from `peak_spacing_crosscheck.csv`, then renamed by the user) -- hankel/sqrtx/
+  fft(amp,phase,complex, each with its FWHM next to it)/peak2-peak3-spacing q_p only (no
+  CHT, per request), **converted from this project's internal 1e5 cm^-1 convention to
+  literal raw cm^-1** (x1e5) since the external request explicitly said "qp(cm-1)", not
+  1e5 cm^-1 -- worth double-checking with the collaborator that this unit reading is what
+  they actually wanted, since the two conventions differ by 5 orders of magnitude and are
+  easy to mix up. FWHM columns already carry the same 2q->q `/2` correction as their
+  paired q_p column (verified: `fft_q_amp`/`fft_q_amp_fwhm` both come from
+  `pk[-1]`/`fw[-1]` divided by the same `/10.0/2`, checked against `plot_channel_fft`'s
+  raw per-channel output for 911cm-1 to confirm bit-for-bit). Self-checked the whole
+  export by independently rebuilding the `rp_schematic` overlay plot (E_F=0.69eV) purely
+  from the new shared CSV and confirming it's pixel-identical to the original
+  notebook-generated version.
