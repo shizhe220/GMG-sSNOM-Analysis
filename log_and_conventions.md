@@ -859,3 +859,68 @@ Read it deliberately when historical context is needed.
   export by independently rebuilding the `rp_schematic` overlay plot (E_F=0.69eV) purely
   from the new shared CSV and confirming it's pixel-identical to the original
   notebook-generated version.
+
+## 2026-07-22 Two-wave (q+2q) Hankel model; peak2-3 spacing extended to 920-1000cm-1; shared CSV expanded
+
+- **New `fit_hankel_two_wave`** (`envsetting/snippet/dispersion_fitting.py`): real-space
+  fit as the SUM of two Hankel-wave terms sharing one physical q (edge-launched "q" +
+  tip-launched round-trip "2q"), instead of the single-term model. Motivated by the FFT's
+  own 2-Lorentzian-peak fits showing a non-negligible "q" peak alongside "2q" starting
+  ~900cm-1 -- the single-term Hankel/1-sqrtx fits only ever modeled "2q" and get less
+  reliable once "q" isn't negligible (clearest at 1000cm-1: single-wave gives an outlier
+  373999cm-1 vs two-wave's 242187cm-1, much closer to every other independent estimate).
+  Q factor defined as `Re(q_p)/Im(q_p)` (same convention as `compare_cavity_models`'s
+  legend), reported separately per term (`Q_2q`, `Q_q`) -- `Q_2q` consistently higher
+  than `Q_q` across 900-1000cm-1, matching the physical expectation that the tip
+  round-trip mode is cleaner than the edge-launched one. Tested and rejected constraining
+  the complex fit to the actually-measured phase channel instead of a free/fitted phase:
+  ~7-8x worse RMSE, because measured phase is nearly flat while background-subtracted
+  amp legitimately goes negative -- `|complex model|>=0` can't reproduce sign changes
+  without phase sweeps the real data doesn't show. Added 11 "Two-wave Hankel Fit" cell
+  pairs to `fitting_pipeline_graphene_4x1_lp1.ipynb` (wn=900-1000, one per wn, matching
+  project's tunable-parameter-comment-block convention), tuned interactively by user.
+- **PPTX deck**: `scripts/make_two_wave_hankel_pptx.py` -> `slides/
+  GMG_two_wave_hankel_900to1000.pptx`, one slide per wn (900-1000), single-wave-vs-
+  two-wave Hankel comparison + FFT 4-panel, font Aptos, verified via python-pptx
+  shape-bounds introspection (no PPTX renderer available in this environment).
+- **Real-space peak2-peak3/2 spacing extended from 860-911cm-1 (already validated) to
+  920-1000cm-1**: default relative-prominence threshold (0.08x tail ptp) misidentified
+  peaks at two wn, caught by user inspection of a 9-panel diagnostic figure
+  (`figures/rp_dispersion/graphene_4x1_manual_lp1_peak_spacing_crosscheck_v1/
+  two_wave_hankel_900to1000/lorentzian_fit_realspace_preview_920to1000_v4.png`):
+  941cm-1 missed a real small peak (~373.5nm, prominence 0.053, below threshold) and
+  used a noise point as peak3 instead (q corrected 0.888->2.383); 1000cm-1 let a spurious
+  near-edge shoulder (~36.9nm, prominence 0.097) through as a false peak1, shifting every
+  later index (q corrected 2.676->1.822). Fixed with narrowly-scoped absolute-prominence
+  overrides for just those two wn (941: 0.045, 1000: 0.11) -- explicitly did NOT apply a
+  general "if fitted gamma too large, fall back to raw grid" rule, since an earlier
+  attempt at that silently changed 920/930's already-correct results (caught and
+  reverted; only 941's degenerate peak2 fit uses the raw-grid fallback now, scoped to
+  that one point).
+- **Shared CSV expanded** (`GMG#3_4x1um_GMGregion_leftedge.csv`): added
+  `hankel_2wave_qp_cm-1` column (900-1000 only, same physical-q_p convention as
+  `hankel_qp_cm-1`, directly comparable/supersedes it for those wn); filled in
+  `peak2to3_spacing_qp_cm-1` for all 15 wn (860-1000, previously only 860-911); filled in
+  `fft_amp/phase/complex_qp_cm-1` (+FWHM) for 920-1000 (previously only 860-911) --
+  verified the FFT tunable params (`xr`/`q_guess`/`search_window`/`fit_window`) used for
+  this export match the notebook's live cells exactly, wn by wn, before trusting the
+  re-run. For wn=991,1000, amp-channel FFT is essentially unresolved (FWHM/qp = 85%/118%,
+  i.e. comparable to or larger than the peak position itself) -- switched the "preferred"
+  FFT column for these two wn to phase channel per user's finding (991: FWHM/qp drops to
+  21%, clean improvement; 1000: FWHM/qp only drops to 57%, and its qp value is itself a
+  clear outlier vs. every other method for that wn -- flagged in the CSV header and kept
+  as phase per user's explicit call, but not fully trusted). Two short `#`-comment lines
+  at the top of the CSV record both of these (two-wave for 900-1000, phase-channel
+  preference for 991/1000) -- CSV still reads cleanly with `pd.read_csv(..., comment='#')`.
+  Combined-overlay plot rebuilt as a permanent script,
+  `scripts/plot_rp_hankel_fft_peak23_crosscheck.py` (previously only existed as
+  un-persisted ad hoc Bash), reading directly from the shared CSV as its one source of
+  truth. **Follow-up same day**: the `#`-comment header lines turned out to break plain
+  `pd.read_csv()` outright (`ParserError`, not just a missed note) unless the reader
+  passes `comment='#'` -- not a safe assumption for a file meant to be handed to someone
+  else. Replaced with explicit `fft_recommended_channel`/`fft_recommended_qp_cm-1`/
+  `fft_recommended_fwhm_cm-1` columns (pre-selected per row: amp for 860-980, phase for
+  991/1000) plus a sibling `GMG#3_4x1um_GMGregion_leftedge_README.txt` explaining every
+  column -- self-documenting in pure tabular form instead of a comment a reader could
+  miss or a naive loader could choke on. The plot script now reads only
+  `fft_recommended_*` rather than hand-picking amp vs phase itself.

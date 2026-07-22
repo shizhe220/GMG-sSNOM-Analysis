@@ -9,12 +9,20 @@ lp2="interior" (MoO3(4.2nm)/Gr/SiO2/Si). See `data/`/`figures/` per-dataset subf
 the full dated history (bug fixes, architecture decisions, why things are the way they are).
 This file only holds the stable structure/rules; the log is where the "why" lives.
 
+**`SI_figures.md`** (2026-07-22+) is a curated, by-topic (not by-date) collection of
+maintained-quality figures + short changelogs — the "current answer + why it changed"
+view, meant to eventually feed a paper SI. Update opportunistically after a major method
+change or a result worth keeping (not every session); proactively suggest an update when
+one seems warranted rather than waiting to be asked. Complements, doesn't replace,
+`log_and_conventions.md`'s complete append-only history.
+
 ## Folder Structure (as of 2026-07-10)
 
 ```
 GMG/
 ├── CLAUDE.md                          This file (stable rules) -- see log_and_conventions.md for history.
 ├── log_and_conventions.md             Progress Log (dated entries) -- read for "why", not loaded automatically.
+├── SI_figures.md                      Curated by-topic figures + short changelogs, SI-quality, update opportunistically.
 ├── nanoftir_Shizhe.py                 Thin re-export shim + GMG-specific glue (load_aligned_wn_signal,
 │                                        run_wn_comparison). The actual CHT/Hankel/1-sqrtx/FFT engine now
 │                                        lives in /Users/shizhe/envsetting/snippet/dispersion_fitting.py

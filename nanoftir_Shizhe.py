@@ -21,6 +21,7 @@ from snippet.dispersion_fitting import (
     fit_cavity_prefactor_compare, compare_cavity_models, plot_channel_fft,
     complex_hankel_transform, fit_cht_peaks, fit_and_plot_cht,
     plot_fit_comparison_combined, plot_fit_comparison_panels,
+    fit_hankel_two_wave,
 )
 
 # ==========================================
