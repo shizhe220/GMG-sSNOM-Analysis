@@ -18,7 +18,7 @@ from pptx.oxml.ns import qn
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 FIG_DIR = 'figures/graphene_4x1_manual/lp1/two_wave_hankel'
-OUT_PPTX = 'slides/GMG_two_wave_hankel_900to1000.pptx'
+OUT_PPTX = 'slides/GMG_two_wave_hankel_900to1000_lp1.pptx'
 FONT = 'Aptos'
 
 NAVY = RGBColor(0x1E, 0x27, 0x61)

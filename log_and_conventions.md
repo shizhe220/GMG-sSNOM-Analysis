@@ -924,3 +924,353 @@ Read it deliberately when historical context is needed.
   column -- self-documenting in pure tabular form instead of a comment a reader could
   miss or a naive loader could choke on. The plot script now reads only
   `fft_recommended_*` rather than hand-picking amp vs phase itself.
+
+## 2026-07-23 lp2 linecut re-extraction (2x averaging width); ROI-preview bug fix
+
+- **lp2 (right edge) perpendicular averaging width doubled** (0.076923um -> 0.153846um,
+  via `manual_linecut_pipeline_graphene_4x1.ipynb`'s `_width_px` override at the start of
+  its "right edge" section) to reduce noise; lp1 untouched (confirmed: `git diff` on
+  lp1's 15 exported CSVs is empty, and `linecut_geometry.csv`'s lp1 rows are byte-
+  identical -- only the 15 lp2 rows' `rect_width_um` changed). New lp2 O3A values shift
+  ~1% on average vs the old extraction (max ~6% at any single point, per-point noise
+  roughly unchanged) -- a small, expected perturbation from wider averaging, not a
+  structural change.
+- **Quantified impact on the already-tuned lp2 real-space fits**: re-ran the 15
+  already-tuned `xr_range`/`lam0_guess` pairs (committed 2026-07-22) on old vs. new lp2
+  data. 8 of 15 wn shift meaningfully (10-27%) -- that tuning does NOT carry over as-is
+  and needs a fresh visual pass. Separately found 4 wn (941/950/970/980) where old and
+  new data give *identical* fitted q_p -- not because the fit is robust, but because it's
+  saturating against `fit_cavity_prefactor_compare`'s default `lam_bound_factor=(0.7,1.2)`
+  bound in both cases (verified: e.g. 941/970/980 all land on exactly
+  `2*pi/(1.2*0.4um) = 130899.7 cm^-1`, the upper bound for their shared `lam0_guess=0.4`)
+  -- a pre-existing tuning gap from 2026-07-22, unrelated to today's width change, just
+  coincidentally invisible in an old-vs-new comparison because both saturate identically.
+- **Fixed a bug in the notebook's own ROI-preview cells** ("Mapping + single-channel
+  waterfall" section, the cells building `_map_geom_left`/`_map_geom_right` for
+  `plot_mapping_waterfall`): both were reading `rect_width_um=DEFAULT_WIDTH_UM`, a single
+  global that gets reassigned right before the lp2/right-edge extraction section runs --
+  so by the time the LEFT/lp1 preview cell executes (it comes after both edges' full
+  extraction loops), `DEFAULT_WIDTH_UM` could already hold lp2's (now doubled) value,
+  drawing a misleading ROI rectangle on the lp1 figure even though lp1's actual
+  `linecut_store_left` data was never affected (it was extracted earlier, before the
+  reassignment). Fixed to read each edge's own stored width directly
+  (`next(e['val'] for e in linecut_store_left if e['type']=='rect')`), the same source
+  `linecut_geometry.csv`'s export already correctly uses. Verified quantitatively (not
+  just visually): measured the fixed lp1 rectangle's rendered pixel height and converted
+  using the map's known um/px scale -> ~0.085um, matching the expected 0.077um (not the
+  doubled 0.154um). Re-ran the notebook headlessly to regenerate both preview figures
+  (`figures/graphene_4x1_manual/linecut_extraction/mapping_waterfall_{left,right}_amp.png`),
+  now added to `SI_figures.md` §1 as the new "foundation" section other sections build on.
+
+## 2026-07-23 lp2 starting-point sensitivity scan; two-wave Hankel cells added
+
+- **New `scripts/startpoint_sensitivity_graphene_4x1_lp2_860to911.py`**, sibling of the
+  lp1 version (2026-07-17), run on lp2's freshly re-extracted (2x width) data with the
+  user's current real-space `lam0_guess_um` values. Unlike lp1, **Hankel is unstable for
+  900/911cm-1 across the entire 0-500nm start-point scan** (900cm-1 never plateaus,
+  climbing from ~0.9e5 to >2.0e5cm-1 the whole way; 911cm-1 hops between local minima,
+  e.g. crashing to ~0.52e5cm-1 right where lp1's own 260-340nm window sat) -- while
+  **1/sqrtx is comparably well-behaved for all 6 wn including 900/911** over roughly
+  200-380nm. Read as independent evidence (beyond the FFT peak count) that the
+  edge-launched wave is non-negligible for lp2 starting at 900cm-1 too, and that trying to
+  force a single-wave Hankel fit there is unstable, not just "using the wrong start
+  point" -- the two-wave model is the fix, not further start-point tuning.
+  `GOOD_REGION_NM` for the 860-890 (well-behaved) subset first set to (260,380) by
+  inspection, then **narrowed to (200,300) per user request**: lp2's linecut is only
+  ~1000nm total (vs. lp1's longer cuts), so a window extending to 380nm eats too much of
+  an already-short usable range. Outputs:
+  `figures/graphene_4x1_manual/lp2/startingpoint_sensitivity/`.
+- **11 two-wave Hankel cells (900-1000cm-1) added to
+  `fitting_pipeline_graphene_4x1_lp2.ipynb`**, mirroring lp1's cell structure/markdown
+  exactly (same insertion approach as lp1's 2026-07-22 addition -- markdown+code pair
+  after each wn's FFT section). Since lp2's FFT section hasn't been retuned to the
+  2-peak/`peak_method='lorentzian'` methodology yet (still has lp1's pre-2026-07-22
+  single-peak `q_guess`, literally copy-inherited -- same cell IDs as lp1's FFT cells,
+  confirming this notebook started life as a direct copy), there was no already-tuned FFT
+  q_guess to bootstrap from like lp1 had. Seeded `q_guess_2wave=[q,2q]` instead from each
+  wn's current (rough, still-being-tuned) real-space `lam0_guess_um` via `q=2*pi/lam0`,
+  flagged explicitly in each cell's markdown as a rough starting seed, not a validated
+  guess. Verified via full headless re-execution (`jupyter nbconvert --execute`) that all
+  11 cells run without errors -- results themselves are messy as expected from an
+  untuned seed (several `Q_2q=inf`, i.e. degenerate fits), left for the user's own
+  interactive tuning pass.
+- **lp2 good-point region narrowed to (200,300)nm per user request** (from the (260,380)
+  chosen by inspection above) -- lp2's linecut is only ~1000nm total (vs. lp1's longer
+  cuts), so a window extending to 380nm ate too much of an already-short usable range.
+- **Cross-checked lp2's raw linecut data against a labmate's (Weicheng) independent
+  extraction** of the same region (`data/Weicheng's linecut/4x1um_lp2/
+  MoO3_interior_S3amp_linecuts_waterfall.csv`, O3 amp only, wn=860-980cm-1). Starting
+  points differ between the two extractions as expected -- found via per-wn cross-
+  correlation a consistent 370+-13nm offset across all 13 shared wn (collaborator's x=0
+  starts ~370nm before our aligned edge). After shifting to a common frame and z-scoring
+  (absolute scales aren't comparable, only shape is), agreement is strong: r=0.90-0.99,
+  mostly >0.95 -- validates that lp2's raw data matches an independent extraction well,
+  meaning the Hankel instability found in the start-point scan above is a fitting-model
+  issue, not a data-quality one. Figure:
+  `figures/graphene_4x1_manual/lp2/compare_with_weicheng_linecut.png`.
+- **Added lp2 content to `SI_figures.md`**: restructured §5 (starting-point sensitivity)
+  into lp1/lp2 subsections (same topic, both edges, instead of duplicating the section);
+  added new §6 for the Weicheng cross-check (a topic with no lp1 equivalent). Updated the
+  doc's intro to reflect lp2 now having extraction/diagnostic-level content even though
+  its dispersion-overview/peak2-3/two-wave sections are still pending fit tuning.
+- **Checked the user's freshly-completed lp2 tuning pass (all 15 wn) for anomalies**,
+  requested after they finished. Found a systematic, previously-undiagnosed issue:
+  **7 of 15 wn's single-wave Hankel fits (911, 930, 941, 950, 960, 980, 991) silently
+  saturate against `fit_cavity_prefactor_compare`'s default `lam_bound_factor=(0.7,1.2)`
+  bound** -- their reported lambda_p is *exactly* `1.2*lam0_guess` (verified to 3 decimal
+  places for every one), meaning these are bound artifacts, not genuine convergence.
+  This also explains an earlier confusing exchange: the user showed a `compare_cavity_models`
+  result for lp2 860cm-1 giving lambda_p=452.9nm (q=1.39e5cm-1) that couldn't be
+  reproduced from a fresh run (which gives 661.8nm/q=0.949e5cm-1, a genuine minimum) --
+  452.9nm = exactly `0.7*0.647`, the *lower* bound, so that earlier number was almost
+  certainly the same kind of artifact (likely from a stale kernel state), not a real
+  discrepancy in the analysis. In the two-wave section (900-1000cm-1), 2 of 11 wn
+  (920, 960) are separately degenerate (`Q_2q` -> inf, i.e. `q_imag_2q` collapsed to ~0).
+  None of this reflects a code bug -- `lam_bound_factor` is a real, intentional guard
+  rail against runaway fits; it's just too tight for several of lp2's high-wn cells given
+  their current `lam0_guess`, and needs either a larger `lam0_guess` (escaping the bound,
+  as demonstrated for 860cm-1: `lam0_guess>=0.56` finds the genuine 661.8nm minimum
+  instead of saturating) or an explicit `lam_bound_factor` override, on a per-wn basis.
+- **New `scripts/plot_rp_hankel_lp2.py`**: rp(q,w) overlay for lp2, hankel only (no FFT/
+  peak2-3 yet, per user request -- those come later). Single-wave for 860-890 (all
+  genuine, no bound issues there), two-wave "q" term for 900-1000 (the 2 degenerate wn
+  above marked with a distinct open/hatched marker rather than plotted as trustworthy).
+  860-920 track the Im(r_p) ridge well; 930-1000 scatter visibly to higher q than the
+  ridge predicts (most notably 970, 1000) -- consistent with the bound-saturation and
+  two-wave-degeneracy issues just found, not yet a "done" dispersion result for that
+  range. Saved to `figures/rp_dispersion/graphene_4x1_manual_lp2_hankel_only_Ef0.69eV.png`.
+- **New `scripts/plot_rp_hankel_fft_lp2_compare.py`**: per user request, extends the
+  above with FFT (found lp2's FFT cells already upgraded to the 2-peak/
+  `peak_method='lorentzian'` methodology by the user, matching lp1 -- re-ran with
+  `plot=False` for full-precision peak/FWHM numbers) and, since lp2 is still in the
+  comparison stage (not a validated convention like lp1's "always 2q"), deliberately
+  shows BOTH "q" (direct, first/smaller peak) and "2q/2" (last/larger peak, halved) side
+  by side instead of collapsing to one choice -- same duality applied to Hankel (single-
+  wave's own q output effectively already assumes "2q/2", labeled as such; two-wave's
+  directly-fitted "q" term shown alongside for the same 900-1000 wn instead of only
+  picking one model per wn as the earlier hankel-only plot did). Found: 860-900 all
+  methods/conventions agree with the ridge; 911-950 FFT's direct "q" and two-wave
+  hankel's "q" independently cluster close to each other and the ridge (good cross-
+  validation); 960-1000 FFT's "2q/2" sits notably right of the ridge while FFT "q" and
+  two-wave "q" track it better -- suggesting, not yet confirmed, that "q" may be the more
+  trustworthy reading at these wn. Saved to
+  `figures/rp_dispersion/graphene_4x1_manual_lp2_hankel_fft_qvs2q_compare_Ef0.69eV.png`.
+- Both new lp2 rp figures added to `SI_figures.md` as new §2b (lp1's §2 dispersion
+  overview split into 2a/2b, same pattern as §5's lp1/lp2 split) -- explicitly marked
+  "comparison stage, not settled" rather than presented as a finished result like lp1's.
+- **Same-day follow-up**: user re-tuned 920/960's two-wave cells after this review;
+  both now converge genuinely (920: q=1.50e5cm-1, Q_2q=17.3; 960: q=2.06e5cm-1,
+  Q_2q=10.9 -- previously both had Q_2q->inf). Both rp scripts
+  (`plot_rp_hankel_lp2.py`, `plot_rp_hankel_fft_lp2_compare.py`) updated with the fresh
+  values and re-run; the two-wave "degenerate" flagged-marker code path is now guarded
+  to skip drawing (and skip adding to the legend) when nothing is flagged, rather than
+  leaving a stale/empty legend entry. The 7 bound-saturated single-wave points remain
+  the only flagged-artifact category in both figures. `SI_figures.md` §2b updated to
+  match.
+- **Decided "2q/2" over "q" for FFT going forward**: comparing the two in the plot
+  above, FFT's direct "q" (first peak) had much larger FWHM error bars than "2q/2"
+  (last peak, halved), even where its central value tracked the ridge -- judged too
+  unreliable to keep using. New `scripts/plot_rp_hankel_fft_lp2_clean.py` builds the
+  resulting "clean" plot: hankel single-wave (860-890) + two-wave (900-1000, now both
+  920/960 genuine) + FFT "2q/2" only. The 7 bound-saturated single-wave wn are simply
+  omitted (not flagged) since two-wave already gives a genuine result for that same
+  range. Saved to
+  `figures/rp_dispersion/graphene_4x1_manual_lp2_hankel_fft_clean_Ef0.69eV.png`.
+  `SI_figures.md` §2b restructured: this is now the lead "working version", with the
+  hankel-only and q-vs-2q/2 comparison figures kept below as "how this was chosen" --
+  a documented decision trail, not re-plotted going forward.
+- **Attempted to fix the 7 bound-saturated single-wave Hankel wn** (per user request --
+  "别的model你就不要动了" (don't touch the other models) explicitly scoped this to
+  single-wave only). Systematic approach: for each wn, scan `lam0_guess` (both with the
+  default `lam_bound_factor=(0.7,1.2)` and with `(0.3,3.0)` widened) to map out whether a
+  genuine (non-boundary) local minimum exists anywhere near the two-wave/FFT "2q/2"
+  consensus q for that wn.
+  - **Fixed, 911cm-1**: `lam0_guess` 0.6→0.405 (xr unchanged, `(0.11,1.2)`). Genuine
+    convergence to lambda_p=423.4nm/q=1.484e5cm-1, confirmed stable across
+    lam0_guess=0.37-0.49 (all converge to the same value, not a fluke), rmse=0.045,
+    within ~4% of two-wave's q=1.55e5.
+  - **Fixed, 960cm-1**: `lam0_guess` 0.3→0.375, PLUS a per-wn `lam_bound_factor=(0.85,1.15)`
+    override (default bound kept sliding to its own edge from every seed tried -- the
+    genuine minimum at lambda_p=370.1nm/q=1.698e5 needed a narrower box to actually be
+    reached, not a different seed). Confirmed stable across lam0_guess=0.37-0.38, AIC
+    clearly better (-291.0) than the neighboring bound-saturated results (-286.8 to
+    -287.0) -- within ~18% of two-wave's q=2.06e5, a real if partial improvement.
+    Required extending `compare_cavity_models` (dispersion_fitting.py) with an optional
+    `lam_bound_factor=None` passthrough (default preserves old behavior for every other
+    caller) since the wrapper didn't previously expose it.
+  - **Not fixable, 930/941/950/980/991**: the widened `(0.3,3.0)` sweep's own AIC-best
+    minimum for every one of these 5 lands at q~1.1-1.4e5cm-1 -- nowhere near the
+    two-wave/FFT consensus of ~1.9-2.1e5cm-1. Also tried seeding `lam0_guess` directly at
+    the two-wave-implied wavelength with both default and moderately-widened bounds: all
+    5 immediately re-saturate at the (new) bound edge instead of settling near the
+    target, and scanning outward from there shows RMSE still monotonically improving
+    with no plateau in sight -- i.e. there simply isn't a genuine single-wave local
+    minimum near the expected physical q for these 5 wn. This is model inadequacy, not
+    an unlucky choice of `lam0_guess`: further, independent confirmation that single-wave
+    Hankel breaks down at these wn and two-wave (which already gives a genuine answer for
+    the same range) is the right tool there, not a fixable single-wave tuning gap. Left
+    as bound-saturated/flagged rather than forced to a different-but-still-wrong number.
+  - Notebook cells for 911/960 updated and re-executed
+    (`fitting_pipeline_graphene_4x1_lp2.ipynb`); `plot_rp_hankel_fft_lp2_compare.py`
+    updated (911/960 moved from the "bound-saturated" flagged set to genuine, values
+    refreshed) and regenerated. `plot_rp_hankel_lp2.py` and `plot_rp_hankel_fft_lp2_clean.py`
+    unaffected -- neither ever plotted single-wave for 911/960 in the first place (both
+    already used two-wave for the whole 900-1000 range).
+
+## 2026-07-23 lp2 rp figure folder cleanup; E_F scan (0.60-0.69eV)
+
+- **Folder cleanup**: all 3 lp2 rp figures (`..._hankel_only`, `..._hankel_fft_qvs2q_compare`,
+  `..._hankel_fft_clean`) had been saved as loose files directly under
+  `figures/rp_dispersion/`, inconsistent with lp1's own convention of keeping this kind
+  of investigation in a named subfolder (`graphene_4x1_manual_lp1_peak_spacing_crosscheck_v1/`).
+  Moved into a new `figures/rp_dispersion/graphene_4x1_manual_lp2_hankel_fft_compare_v1/`
+  subfolder; `SAVE_DIR` updated in all 3 scripts
+  (`plot_rp_hankel_lp2.py`, `plot_rp_hankel_fft_lp2_compare.py`,
+  `plot_rp_hankel_fft_lp2_clean.py`) and all 3 figures regenerated there; `SI_figures.md`
+  §2b paths updated to match. Pre-existing, unrelated top-level files in
+  `figures/rp_dispersion/` (the `graphene_*_rp_dispersion_MoO3{a,c}.png` overview plots
+  from `rp_dispersion_plot.ipynb`, and the `imrp_vs_q_*_MoO3_axis_compare.png` files)
+  left untouched -- not part of this session's work.
+- **E_F scan, 0.60/0.63/0.65/0.67/0.69eV**, per user request: `plot_rp_hankel_fft_lp2_clean.py`
+  changed from a single `EF_REF` to an `EF_LIST` loop, one figure per value, same
+  hankel(single-wave 860-890 + two-wave 900-1000)/FFT(2q/2 only) content as the existing
+  "clean" plot at each E_F. All 5 saved to the new subfolder as
+  `graphene_4x1_manual_lp2_hankel_fft_clean_Ef{X.XX}eV.png`. 0.69eV was only ever a
+  carried-over reference value from lp1, never actually checked against lp2's own data
+  -- this is the first time lp2's own E_F has been visually screened at all. Kept
+  0.69eV as the version referenced in `SI_figures.md` for now pending the user's review
+  of the full 5-way comparison.
+- **New `scripts/plot_rp_hankel_fft_lp2_ef_grid.py`**, per user request to compare the
+  5 E_F values side by side instead of flipping between separate full-size figures: one
+  combined 2x3 subplot grid, same hankel/FFT content as the "clean" plot, one panel per
+  E_F. Added E_F=0.64eV (not part of the original 5-value request) purely to fill the
+  2x3 grid evenly. Saved to
+  `graphene_4x1_manual_lp2_hankel_fft_clean_Ef_grid.png` in the same subfolder. Visual
+  read: 860-920 track the ridge at every E_F; lower E_F (0.60-0.64eV) pulls 930-950
+  tighter onto the ridge than 0.67-0.69eV; the 960-1000 FFT-"2q/2"-vs-ridge divergence
+  persists at every E_F (not an E_F effect). Added to `SI_figures.md` §2b alongside the
+  existing single-E_F figure; E_F itself not yet picked.
+
+## 2026-07-23 lp2 real-space peak2-peak3 diagnostic built, corrected, added to rp plots
+
+- **New `scripts/peak23_diagnostic_graphene_4x1_lp2.py`** (saved as a permanent script
+  this time, unlike lp1's original ad hoc version): find_peaks + prominence threshold on
+  background-subtracted real-space signal, sub-pixel refine via a bounded Lorentzian fit
+  (`B + A/(1+((x-x0)/gamma)^2)`) over a +-3-point window, same method as lp1's. First
+  pass with uniform default settings had real problems: 870/960 picked two points on the
+  same peak's shoulder; 1000cm-1 had a runaway Lorentzian fit blow out the whole plot's
+  y-axis; several wn only found one of peak2/peak3. Added an amplitude-vs-local-ptp
+  sanity guard (reject fit if `|A| > 10x` local ptp) alongside the existing gamma/x0
+  checks, fixing the 1000cm-1 blowup.
+- **User review, round 1**: explicit nm positions given for 870/880/890/930/1000;
+  950/960/970/991 requested as "back-calculate from the established two-wave/FFT q"
+  (expected spacing = `2*pi/(2*q)`). Added a `MANUAL_PEAK_XNM` hint dict -- nearest actual
+  detected local peak (from a finer, lower-threshold `find_peaks` pass) to each hint
+  replaces the automatic pick, rather than trusting the hint's exact nm value literally.
+- **User review, round 2**: user caught that 980's peak3 and 991's peak2 (from round 1)
+  were sitting in valleys, not peaks. Went back to the raw y-values directly (not just
+  eyeballing the plot) for 930/980/991/1000cm-1 and found: 930 and 1000's round-1 hints
+  were on the *rising edge* of a lobe, not its actual local maximum (user had estimated
+  position by eye, understandably slightly off from the true peak); 980/991's
+  back-calculated hints had landed in genuine valleys. Corrected all 4:
+  930 peak3 650->727nm, 1000 peak3 600->534nm, 980 peak2 394->471nm, 980 peak3
+  548->748nm, 991 peak2 283->375nm, 991 peak3 452->622nm (this last one a judgment call
+  between two plausible candidates -- see script comments).
+- **Fit-window test, per user suggestion**: tried widening `HALF_WIN` (sub-pixel
+  Lorentzian fit window) 3->5, hoping a wider window would fit more robustly. Tested
+  explicitly and it made things *worse*: 930/960's fits got pulled onto the wrong
+  neighboring shoulder entirely, and more wn degenerated to the raw-grid fallback than
+  at `HALF_WIN=3`. Reverted to 3. Reasoning: a wider window is more likely to include a
+  competing neighboring feature (another peak or a valley), which pulls a symmetric
+  Lorentzian fit away from the true local peak -- not a "more data = better fit"
+  situation here, since these are subtle, closely-spaced secondary oscillation features.
+- **Final q values** (peak2-peak3/2, 1e5 cm^-1): 860:1.134, 870:1.089, 880:1.033,
+  890:1.134, 900:1.657, 911:1.967, 920:1.704, 930:1.047, 941:2.142, 950:1.916,
+  960:1.977, 970:2.230, 980:1.119, 991:1.271, 1000:1.695. Added as a 4th series (green
+  diamond) to both `plot_rp_hankel_fft_lp2_clean.py` (single-E_F) and
+  `plot_rp_hankel_fft_lp2_ef_grid.py` (E_F grid), all figures regenerated. Agrees well
+  with hankel two-wave/FFT at most wn; **930 and 1000 remain genuine, unresolved
+  outliers** (~40-50% lower than the two-wave/FFT consensus) even after careful
+  correction -- the real-space signal at those two wn has multiple close sub-peaks
+  rather than one clean lobe, so this isn't a "wrong peak" bug, just an open question
+  about which sub-feature the spacing method should be reading.
+- `SI_figures.md` §3 restructured into 3a (lp1)/3b (lp2) subsections (same pattern as
+  §2 and §5); §2b's takeaway and changelog updated to reference the new 4th series.
+
+## 2026-07-23 Weicheng comparison saved as permanent script; lp2 shared CSV exported
+
+- **`scripts/compare_with_weicheng_linecut.py`**: the lp2-vs-collaborator comparison
+  (§6) was ad hoc Bash, not saved -- saved as a permanent script now. Added explicit
+  x-axis tick numbers to every panel (previously only the bottom row showed them, a
+  `sharex` default that only affects tick *labels*, not the axis-label text) and a fixed
+  0-1200nm/200nm tick grid. Same data/alignment/values as before, purely a display fix.
+- **New `scripts/export_shared_csv_graphene_4x1_lp2.py`**: builds lp2's own shared
+  crosscheck CSV, mirroring lp1's `GMG#3_4x1um_GMGregion_leftedge_v2(07222026).csv`
+  exactly (same 15 columns/order/convention, including the self-documenting
+  `fft_recommended_*`/`note` columns rather than a `#`-comment header -- see lp1's own
+  2026-07-22 lesson that comment headers break plain `pd.read_csv()`). All values
+  recomputed fresh from the notebook's live-tuned params (single-wave hankel/sqrtx,
+  two-wave hankel for 900-1000, FFT amp/phase/complex channels) rather than hand-copied
+  from earlier in this conversation, so this script is now the single source of truth.
+  Saved to
+  `figures/rp_dispersion/graphene_4x1_manual_lp2_hankel_fft_compare_v1/GMG#3_4x1um_GMGregion_rightedge_v1(07232026).csv`
+  + sibling README. Per-row `note` flags: which wn use two-wave hankel (900-1000), which
+  5 single-wave hankel values are bound-saturation artifacts
+  (930/941/950/980/991 -- not genuine, use `hankel_2wave_qp_cm-1` instead), and which 2 wn
+  have a genuine peak2-3-spacing outlier (930/1000).
+- **First draft of this CSV had a copy-paste bug, caught by the user**: `fft_recommended_channel`
+  was initially set to `phase` for 991/1000, copied directly from lp1's own convention
+  without independently checking whether it actually holds for lp2's data ("你自己判断过吗").
+  Checked properly: lp2's amp-vs-phase FWHM doesn't follow lp1's pattern at all -- e.g.
+  1000cm-1's phase-channel FWHM (113174) is *worse* (larger) than its amp-channel FWHM
+  (91331), the opposite of lp1. Fixed: `fft_recommended_channel` = `amp` for all 15 wn
+  until/unless a real per-wn channel study is done for lp2 specifically; CSV/README/`note`
+  column regenerated accordingly.
+- **Investigated and fixed the FWHM discrepancy** flagged in the previous entry (user
+  explicitly asked to check the root cause, not just note it). Found: the hand-copied FWHM
+  arrays in `plot_rp_hankel_fft_lp2_clean.py`/`_ef_grid.py`/`_compare.py` were all exactly
+  **half** the correct value, in both the "2q/2" convention (e.g. 860cm-1 amp: 56460 vs the
+  correct 112919) and the "q direct" convention used only in `_compare.py` (e.g. 911cm-1:
+  45429 vs the correct 90859) -- confirmed by recomputing both from scratch and checking the
+  exact 2.0000x ratio at every wn. Root cause: an earlier ad hoc computation (this session,
+  not saved as a script) applied an extra erroneous `/2` on top of the halving the plotting
+  code *itself* already applies at the `errorbar(xerr=fwhm/2)` call -- i.e. the stored value
+  was already a half-width, then halved again downstream. Fix: replaced all 3 scripts'
+  hardcoded FWHM arrays with the verified full-FWHM values (2x the old numbers) and
+  regenerated all affected figures (5 clean E_F PNGs, the E_F grid PNG, and the compare
+  PNG). Only error-bar *length* changed in these figures -- no q_p point positions moved.
+
+## 2026-07-23 lp2 Hankel+FFT slide deck (860-1000cm-1); slides/ folder check
+
+- **New `scripts/extract_hankel_fft_slidefigs_lp2.py`**: pulls per-wn real-space-fit and
+  FFT figures straight out of `fitting_pipeline_graphene_4x1_lp2.ipynb`'s already-executed
+  cell outputs (same source of truth as the CSV export script -- no recomputation, so no
+  risk of numeric drift from the tuned notebook results). Saved to
+  `figures/graphene_4x1_manual/lp2/two_wave_hankel/`: `{wn}cm-1_singlewave.png` (860-890,
+  the `compare_cavity_models` Hankel+1/√x "sorted by AIC" comparison), `{wn}cm-1_hankel2wave.png`
+  (900-1000, the single-wave-vs-two-wave comparison), and `{wn}cm-1_fft.png` (all 15, the
+  4-panel spatial+amp/phase/complex-FFT figure). Notebook cell-index map fixed and
+  documented in the script's docstring (compare_cavity_models cells 9/19/27/35 + FFT cells
+  11/21/29/37 for 860-890; FFT cells 45/55/.../145 + two-wave cells 47/57/.../147 for
+  900-1000).
+- **New `scripts/make_hankel_fft_pptx_lp2.py`**: builds
+  `slides/GMG_hankel_fft_overview_graphene_4x1_lp2.pptx` (16 slides: 1 title + 15 per-wn),
+  same layout as lp1's `make_two_wave_hankel_pptx.py` (title left, fit-comparison plot
+  top-right, FFT panel below spanning the width) -- just swapping in `_singlewave.png` for
+  860-890 and `_hankel2wave.png` for 900-1000 instead of lp1's single hankel2wave-only set
+  (lp1's own deck only covers 900-1000, since lp1 never needed a two-wave/single-wave
+  split narrative). Verified via python-pptx shape-bounds introspection (no renderer
+  available): 16 slides, 2 pictures/slide on every per-wn slide, no out-of-bounds shapes.
+- **`slides/` folder check** (user asked to tidy up after adding the new deck): checked
+  provenance of every other file via `git log` before touching anything, since a couple of
+  names looked like possible legacy duplicates at first glance. Found no genuine dead
+  files -- `GMG_CHT_overview.pptx` (no suffix) turned out to be a *distinct*, still-valid
+  dataset (`graphene_3x1`, the non-manual predecessor of `graphene_3x1_manual`), not a
+  stale duplicate of `GMG_CHT_overview_graphene_3x1_manual.pptx` as it first appeared --
+  both are legitimate, per their own `make_overview_pptx*.py` scripts. `Figures_v1_YMS.pptx`
+  is a labmate's (Yinming Shao's) file, left untouched. `Rp&fitting.pptx` was last touched
+  in the immediately-preceding session's final commit (`3a2d490`), so it's current, not
+  stale. Only change made: renamed `GMG_two_wave_hankel_900to1000.pptx` ->
+  `GMG_two_wave_hankel_900to1000_lp1.pptx` (and updated its generating script's `OUT_PPTX`
+  to match) purely for lp1/lp2 disambiguation now that an lp2 counterpart exists --
+  everything else left in place, no reorg performed without a concrete reason found.
